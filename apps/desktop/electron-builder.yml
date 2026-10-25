@@ -1,0 +1,16 @@
+appId: com.itmecasey.imcmail
+productName: IMC-Mail
+directories:
+  buildResources: build
+files:
+  - out/**
+  - package.json
+asarUnpack:
+  - '**/*.node'
+win:
+  target:
+    - nsis
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+npmRebuild: false

@@ -1,0 +1,9 @@
+packages:
+  - apps/*
+  - packages/*
+
+# Dependencies allowed to run install scripts (everything else stays blocked).
+allowBuilds:
+  electron: true
+  better-sqlite3: true
+  electron-winstaller: false

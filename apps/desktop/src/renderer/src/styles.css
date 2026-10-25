@@ -1,0 +1,31 @@
+@import 'tailwindcss';
+@import './styles/tokens.css';
+@import './styles/base.css';
+
+/* Colors come only from tokens.css: drop Tailwind's palette so a stray `bg-blue-500` cannot compile. */
+@theme {
+  --color-*: initial;
+}
+
+@theme inline {
+  --color-ground: var(--ground);
+  --color-rail: var(--rail);
+  --color-sheet: var(--sheet);
+  --color-raised: var(--raised);
+  --color-hover: var(--hover);
+  --color-selected: var(--selected);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-on-accent: var(--on-accent);
+  --color-alert: var(--alert);
+  --color-attn: var(--attn);
+  --color-on-attn: var(--on-attn);
+  --color-ok: var(--ok);
+  --color-transparent: transparent;
+  --color-current: currentColor;
+}

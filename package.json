@@ -1,0 +1,17 @@
+{
+  "name": "imc-mail",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Multi-account email client for streamers and content creators",
+  "scripts": {
+    "dev": "pnpm --filter @imc/desktop dev",
+    "build": "pnpm --filter @imc/desktop build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "format": "prettier --write ."
+  },
+  "devDependencies": {
+    "prettier": "^3.9.10",
+    "typescript": "^7.0.2"
+  }
+}

@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-24T22:50:00.000Z",
+  "title": "Design System: IMC-Mail",
+  "extensions": {
+    "colorMeta": {
+      "dark-accent": { "role": "primary", "displayName": "Blue Pen (Dark)", "canonical": "#7d9fff", "tonalRamp": ["#0a1020", "#1d2d5c", "#2f4a8f", "#4a6cc4", "#6a8cf0", "#7d9fff", "#9bb5ff", "#c4d3ff"] },
+      "light-accent": { "role": "primary", "displayName": "Blue Pen (Light)", "canonical": "#2650c9", "tonalRamp": ["#0b1a4d", "#12297a", "#1d41a8", "#2650c9", "#4d73e0", "#7c98ec", "#b9cdfa", "#dfe8fb"] },
+      "dark-ground": { "role": "neutral", "displayName": "Studio Board (Dark)", "canonical": "#0d0f12", "tonalRamp": ["#0d0f12", "#13161a", "#171a1f", "#1d2128", "#232b3b", "#2a2f37", "#667180", "#8f97a3"] },
+      "light-sheet": { "role": "neutral", "displayName": "Cool White Sheet (Light)", "canonical": "#fafbfc", "tonalRamp": ["#1b1f24", "#424b56", "#5b6571", "#7d8794", "#b5bdc8", "#d3d9e0", "#eff2f5", "#fafbfc"] }
+    },
+    "typographyMeta": {
+      "title": { "displayName": "Title", "purpose": "View heading above the sheet." },
+      "body": { "displayName": "Body", "purpose": "Rows, labels and controls." },
+      "label": { "displayName": "Label", "purpose": "Table headers, account names, field labels." }
+    },
+    "shadows": [],
+    "motion": [
+      { "name": "dur-fast", "value": "120ms", "purpose": "Hover and color transitions." },
+      { "name": "dur", "value": "180ms", "purpose": "State changes." },
+      { "name": "ease-out", "value": "cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Exponential ease-out for all state motion." }
+    ],
+    "breakpoints": [{ "name": "min-window", "value": "900px" }]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The single main action in a dialog or empty state.",
+      "html": "<button class=\"ds-btn-primary\">Connect</button>",
+      "css": ".ds-btn-primary{height:36px;padding:0 16px;border:0;border-radius:4px;background:var(--accent);color:var(--on-accent);font:500 13px/1.4 var(--font-sans);transition:background 120ms cubic-bezier(.16,1,.3,1)}.ds-btn-primary:hover{background:var(--accent-hover)}.ds-btn-primary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.ds-btn-primary:disabled{opacity:.6}"
+    },
+    {
+      "name": "Secondary Button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Cancel and alternate actions.",
+      "html": "<button class=\"ds-btn-secondary\">Cancel</button>",
+      "css": ".ds-btn-secondary{height:36px;padding:0 16px;border:1px solid var(--line-strong);border-radius:4px;background:transparent;color:var(--ink);font:400 13px/1.4 var(--font-sans);transition:background 120ms cubic-bezier(.16,1,.3,1)}.ds-btn-secondary:hover{background:var(--hover)}.ds-btn-secondary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.ds-btn-secondary:disabled{opacity:.5}"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input-field",
+      "description": "Single-line input with a visible label above it.",
+      "html": "<label class=\"ds-label\" for=\"e\">Email address</label><input id=\"e\" class=\"ds-input\" value=\"brand-deals@demo-channel.example\">",
+      "css": ".ds-label{display:block;margin-bottom:4px;font:400 12px/1.4 var(--font-sans);color:var(--ink-2)}.ds-input{height:36px;width:100%;box-sizing:border-box;padding:0 12px;border:1px solid var(--line-strong);border-radius:4px;background:var(--sheet);color:var(--ink);font:400 13px/1.4 var(--font-sans)}.ds-input:focus-visible{border-color:var(--accent);outline:2px solid var(--accent);outline-offset:0}"
+    },
+    {
+      "name": "Rail Row",
+      "kind": "nav",
+      "description": "A folder or view in the sidebar, with icon and unread count.",
+      "html": "<button class=\"ds-rail-row ds-on\">Inbox <span class=\"ds-num\">3</span></button>",
+      "css": ".ds-rail-row{display:flex;gap:8px;align-items:center;justify-content:space-between;height:32px;width:100%;padding:0 8px;border:0;border-radius:4px;background:transparent;color:var(--ink-2);font:400 13px/1.4 var(--font-sans)}.ds-rail-row:hover{background:var(--hover);color:var(--ink)}.ds-rail-row.ds-on{background:var(--selected);color:var(--ink);font-weight:500}.ds-num{font-variant-numeric:tabular-nums;font-size:12px}"
+    },
+    {
+      "name": "Thread Row",
+      "kind": "custom",
+      "refersTo": "thread-row",
+      "description": "One ruled row: track number, tape chip, sender, subject, date, unread mark.",
+      "html": "<div class=\"ds-row\"><span class=\"ds-no\">1</span><span class=\"ds-tape\"></span><b class=\"ds-from\">Nova Energy (demo)</b><b class=\"ds-subj\">Sponsored segment: Q4 brief</b><span class=\"ds-mark\"></span></div>",
+      "css": ".ds-row{display:grid;grid-template-columns:3rem 1.5rem 12rem 1fr 1rem;align-items:center;gap:8px;height:36px;padding:0 12px;border-bottom:1px solid var(--line);background:var(--sheet);color:var(--ink);font:600 13px/1.4 var(--font-sans)}.ds-row:hover{background:var(--hover)}.ds-no{font-weight:400;font-size:12px;color:var(--ink-3);text-align:right;font-variant-numeric:tabular-nums}.ds-tape{width:8px;height:8px;border-radius:2px;background:var(--tape-1)}.ds-from,.ds-subj{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.ds-mark{width:8px;height:8px;border-radius:999px;background:var(--accent)}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Track Sheet",
+    "overview": "IMC-Mail is a session sheet for a creator's mail: every thread is a numbered row ruled in hairlines, marked up like a producer's pen on a studio track sheet. It is flat. Surfaces are tonal steps of one cool graphite family, separated by 1px rules. Nothing glows, floats, or casts a shadow.",
+    "keyCharacteristics": [
+      "Flat tonal layering, hairline rules, no shadows or gradients.",
+      "Square-leaning geometry: 2px and 4px radii only.",
+      "One grotesque family, tabular numerals for data.",
+      "Accent color only for selection, primary actions, links, and the unread mark.",
+      "State carried by mark shape and weight, never hue alone."
+    ],
+    "rules": [
+      { "name": "The One Pen Rule", "body": "The blue accent appears on selection, the primary action, links, focus, and the unread mark, and nowhere else.", "section": "colors" },
+      { "name": "The Flat Color Rule", "body": "Every fill is one flat token. No gradients, glows, blurs, or shadows.", "section": "colors" },
+      { "name": "The Shape Over Hue Rule", "body": "A state is never signaled by color alone.", "section": "colors" },
+      { "name": "The Tabular Rule", "body": "Any column of numbers uses tabular figures.", "section": "typography" },
+      { "name": "The No Shadow Rule", "body": "If a layer needs separating, step its tone or draw a rule. Never add a shadow.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do take every color from a semantic token; never write a hex in a component.",
+      "Do keep text at 4.5:1 and control borders at 3:1 in all three themes.",
+      "Do carry state with a mark shape plus color.",
+      "Do use .num for any column of figures."
+    ],
+    "donts": [
+      "Don't add shadows, gradients, glows, or backdrop blur.",
+      "Don't use a colored stripe on the edge of a row or card.",
+      "Don't use an emoji or text glyph as an icon.",
+      "Don't let a state rely on color alone."
+    ]
+  }
+}

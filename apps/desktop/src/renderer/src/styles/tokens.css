@@ -1,0 +1,177 @@
+/*
+ * IMC-Mail design tokens: "Studio Track Sheet".
+ *
+ * Two layers. Scale tokens (type, space, radius, motion) are theme-independent.
+ * Semantic tokens (surfaces, ink, marks) are defined once per theme below and are the only
+ * colors components may use. Flat color only: no gradients, glows, or shadows.
+ * Contrast of every pairing is enforced by tokens.test.ts.
+ */
+
+:root {
+  /* Type: one family, fixed rem scale (~1.15 steps), tabular numerals for data. */
+  --font-sans: 'Geist Variable', 'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif;
+  --text-xs: 0.6875rem;
+  --text-sm: 0.75rem;
+  --text-base: 0.8125rem;
+  --text-md: 0.9375rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.375rem;
+  --leading-tight: 1.2;
+  --leading-ui: 1.4;
+  --leading-prose: 1.55;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-strong: 600;
+
+  /* Space: 4px base. */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+  --space-7: 3rem;
+
+  /* Shape: a ruled sheet is square; small radii only on controls. */
+  --radius-0: 0;
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-full: 999px;
+  --hairline: 1px;
+
+  /* Layout. */
+  --row-h: 2.25rem;
+  --rail-w: 15rem;
+  --tape-size: 0.5rem;
+  --list-w: 26rem;
+  --z-dialog: 40;
+
+  /* Motion: state changes only. */
+  --dur-fast: 120ms;
+  --dur: 180ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ---- Dark: the studio board. Near-black, bone ink, for dim rooms and second monitors. ---- */
+:root,
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --ground: #0d0f12;
+  --rail: #13161a;
+  --sheet: #171a1f;
+  --raised: #1d2128;
+  --hover: #1f2329;
+  --selected: #232b3b;
+
+  --line: #2a2f37;
+  --line-strong: #667180;
+
+  --ink: #e8ebef;
+  --ink-2: #b5bcc6;
+  --ink-3: #8f97a3;
+
+  --accent: #7d9fff;
+  --accent-hover: #9bb5ff;
+  --on-accent: #0a1020;
+  --alert: #ff7a70;
+  --attn: #f2c230;
+  --on-attn: #14110a;
+  --ok: #4cc38a;
+
+  --scrim: rgb(5 6 8 / 0.7);
+  --selection: #2f4a8f;
+  --scrollbar: #3a414b;
+  --scrollbar-hover: #505a68;
+
+  --tape-1: #7b7ff5;
+  --tape-2: #2fcf9a;
+  --tape-3: #f5a524;
+  --tape-4: #f0609e;
+  --tape-5: #2bc3e0;
+  --tape-6: #a07bf5;
+  --tape-7: #f0605d;
+  --tape-8: #9bd03a;
+}
+
+/* ---- Mid: graphite slate. Lower contrast, easy on the eyes through a bright day. ---- */
+:root[data-theme='mid'] {
+  color-scheme: dark;
+
+  --ground: #2a2f36;
+  --rail: #313740;
+  --sheet: #373e48;
+  --raised: #3f4651;
+  --hover: #424a56;
+  --selected: #44527a;
+
+  --line: #4b5360;
+  --line-strong: #96a0af;
+
+  --ink: #f0f2f5;
+  --ink-2: #ccd2da;
+  --ink-3: #b8c0cb;
+
+  --accent: #9db8ff;
+  --accent-hover: #b6caff;
+  --on-accent: #0c1428;
+  --alert: #ffa098;
+  --attn: #f5cd54;
+  --on-attn: #1a1608;
+  --ok: #6fd6a4;
+
+  --scrim: rgb(14 17 22 / 0.6);
+  --selection: #566c9f;
+  --scrollbar: #5a6471;
+  --scrollbar-hover: #737f8f;
+
+  --tape-1: #9a9dff;
+  --tape-2: #55dcae;
+  --tape-3: #f8b64a;
+  --tape-4: #f585b4;
+  --tape-5: #55d3ea;
+  --tape-6: #b99bff;
+  --tape-7: #f58582;
+  --tape-8: #b0dd62;
+}
+
+/* ---- Light: a cool white sheet, for daylight and well-lit rooms. ---- */
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --ground: #e6e9ed;
+  --rail: #eff1f4;
+  --sheet: #fafbfc;
+  --raised: #ffffff;
+  --hover: #eff2f5;
+  --selected: #dfe8fb;
+
+  --line: #d3d9e0;
+  --line-strong: #7d8794;
+
+  --ink: #1b1f24;
+  --ink-2: #424b56;
+  --ink-3: #5b6571;
+
+  --accent: #2650c9;
+  --accent-hover: #1d41a8;
+  --on-accent: #ffffff;
+  --alert: #bf241b;
+  --attn: #f2c230;
+  --on-attn: #1a1608;
+  --ok: #17734a;
+
+  --scrim: rgb(20 24 30 / 0.45);
+  --selection: #b9cdfa;
+  --scrollbar: #b5bdc8;
+  --scrollbar-hover: #94a0af;
+
+  --tape-1: #5256d9;
+  --tape-2: #0f8f68;
+  --tape-3: #b86e00;
+  --tape-4: #c8317a;
+  --tape-5: #0a7f96;
+  --tape-6: #7248d0;
+  --tape-7: #c63a37;
+  --tape-8: #5f8a0c;
+}

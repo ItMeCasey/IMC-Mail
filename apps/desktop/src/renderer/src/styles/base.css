@@ -1,0 +1,145 @@
+/* Global defaults, including the browser surfaces nobody draws: selection, caret, scrollbars,
+   focus, form-control accents. Everything reads semantic tokens from tokens.css. */
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-ui);
+  font-weight: var(--weight-regular);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: default;
+}
+
+::selection {
+  background: var(--selection);
+  color: var(--ink);
+}
+
+input,
+textarea {
+  caret-color: var(--accent);
+}
+
+input[type='checkbox'],
+input[type='radio'] {
+  accent-color: var(--accent);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+::placeholder {
+  color: var(--ink-3);
+  opacity: 1;
+}
+
+/* Scrollbars: thin, flat, themed. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--scrollbar);
+  border-radius: var(--radius-full);
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-hover);
+  background-clip: content-box;
+}
+
+dialog {
+  color: inherit;
+}
+dialog::backdrop {
+  background: var(--scrim);
+}
+
+/* Data: tabular numerals so track numbers, counts, and times line up. */
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * Mark forms. State is carried by shape as well as hue, so it survives color-blindness,
+ * a low-quality capture card, and the Mid theme's lower contrast.
+ *   solid   = unread
+ *   ring    = needs a reply from you
+ *   dashed  = waiting on someone else
+ *   struck  = done / handled
+ *   doubled = priority
+ */
+.mark {
+  display: inline-block;
+  box-sizing: border-box;
+  width: 0.5rem;
+  height: 0.5rem;
+  flex: none;
+  border-radius: var(--radius-full);
+}
+.mark-solid {
+  background: var(--accent);
+}
+.mark-ring {
+  border: 1.5px solid var(--alert);
+}
+.mark-dashed {
+  border: 1.5px dashed var(--ink-3);
+}
+.mark-struck {
+  border-radius: 0;
+  height: 1.5px;
+  width: 0.75rem;
+  background: var(--ink-3);
+}
+.mark-doubled {
+  border: 1.5px solid var(--attn);
+  outline: 1.5px solid var(--attn);
+  outline-offset: 1.5px;
+}
+
+/* Account identity: a filled square of console tape, never an edge stripe. */
+.tape {
+  display: inline-block;
+  width: var(--tape-size);
+  height: var(--tape-size);
+  flex: none;
+  border-radius: var(--radius-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}

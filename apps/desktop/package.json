@@ -1,0 +1,45 @@
+{
+  "name": "@imc/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "description": "IMC-Mail desktop app",
+  "author": "Casey",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test": "vitest run",
+    "package": "electron-vite build && electron-builder --win"
+  },
+  "dependencies": {
+    "@fontsource-variable/geist": "^5.3.0",
+    "better-sqlite3": "^13.0.3",
+    "imapflow": "^2.9.1",
+    "lucide-react": "^1.61.0",
+    "mailparser": "^3.12.4",
+    "sanitize-html": "^2.18.1"
+  },
+  "devDependencies": {
+    "@imc/core": "workspace:*",
+    "@tailwindcss/vite": "^4.3.3",
+    "@tanstack/react-query": "^5.104.5",
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/mailparser": "^3.9.0",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/sanitize-html": "^2.16.2",
+    "@vitejs/plugin-react": "^6.1.2",
+    "electron": "^45.0.0",
+    "electron-builder": "^26.18.0",
+    "electron-vite": "^6.0.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "tailwindcss": "^4.3.3",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5",
+    "zod": "^4.6.7"
+  }
+}
