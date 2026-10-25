@@ -5,6 +5,7 @@ import { oauthProviders, type Account } from '@imc/core'
 import { Credentials } from './credentials'
 import { openDb, type Db } from './db'
 import { emit, registerIpc } from './ipc'
+import { ComposeService, SmtpMailer } from './compose'
 import { MessageService } from './messages'
 import { loadOAuthConfig, signIn, TokenProvider } from './oauth'
 import { safeStorageSecrets } from './secrets'
@@ -14,6 +15,7 @@ import { SyncManager } from './sync/manager'
 
 let db: Db
 let sync: SyncManager
+let composeService: ComposeService | undefined
 
 // Email bodies are served from their own origin with a per-message CSP (see render-email.ts).
 protocol.registerSchemesAsPrivileged([
@@ -74,6 +76,18 @@ app.whenReady().then(async () => {
   const credentials = new Credentials(secrets, tokens)
   sync = new SyncManager(store, credentials, (accountId) => emit('sync:changed', { accountId }))
   const messages = new MessageService(store, sync)
+  const compose = new ComposeService(
+    store,
+    new SmtpMailer(credentials, (id, path, raw) => sync.append(id, path, raw)),
+    {
+      outboxDir: join(userData, 'outbox'),
+      ensureBody: (id) => messages.ensureBody(id),
+      onChange: () => emit('outbox:changed', {}),
+      onSent: (accountId) => sync.resync(accountId)
+    }
+  )
+  composeService = compose
+  compose.start()
   let signInAbort: AbortController | null = null
 
   protocol.handle('imc-body', (req) => {
@@ -185,6 +199,25 @@ app.whenReady().then(async () => {
       const accountId = store.getMessage(id)?.accountId
       if (accountId) emit('sync:changed', { accountId })
     },
+    'accounts:setSignature': ({ id, signature }) => {
+      store.setSignature(id, signature)
+    },
+    'compose:replyContext': ({ messageId, mode }) => compose.replyContext(messageId, mode),
+    'compose:attach': async ({ paths }) => {
+      if (paths) return compose.vetFiles(paths)
+      const pick = await dialog.showOpenDialog({ properties: ['openFile', 'multiSelections'] })
+      return pick.canceled ? [] : compose.vetFiles(pick.filePaths)
+    },
+    'compose:send': (draft) => compose.send(draft),
+    'compose:undo': ({ outboxId }) => compose.undo(outboxId),
+    'compose:saveDraft': (draft) => compose.saveDraft(draft),
+    'compose:drafts': () => compose.listDrafts(),
+    'compose:loadDraft': ({ id }) => compose.loadDraft(id),
+    'compose:discardDraft': ({ id }) => {
+      compose.discardDraft(id)
+    },
+    'contacts:search': ({ q }) => compose.contacts(q),
+    'outbox:list': () => compose.list(),
     'senders:allowImages': ({ address }) => {
       messages.allowImages(address)
     },
@@ -213,6 +246,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('will-quit', () => {
+  composeService?.stop()
   sync?.stopAll()
   db?.close()
 })

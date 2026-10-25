@@ -36,6 +36,7 @@ interface RawAccount {
   color: string
   config: string
   last_error: string | null
+  signature: string
 }
 
 export interface FetchedMessage {
@@ -148,6 +149,7 @@ export class MailStore {
       color: r.color,
       syncState: this.states.get(r.id) ?? 'connecting',
       lastError: r.last_error,
+      signature: r.signature,
       config: JSON.parse(r.config) as AccountConfig
     }
   }
@@ -391,6 +393,28 @@ export class MailStore {
     )
   }
 
+  /** Threading headers of one message, for building a reply. */
+  getReplyHeaders(id: string): { messageId: string | null; refs: string[]; toAddrs: string } | undefined {
+    const r = this.db
+      .prepare('SELECT message_id, refs, to_addrs FROM message WHERE id = ?')
+      .get(id) as { message_id: string | null; refs: string; to_addrs: string } | undefined
+    return (
+      r && {
+        messageId: r.message_id,
+        refs: r.refs.split(' ').filter(Boolean),
+        toAddrs: r.to_addrs
+      }
+    )
+  }
+
+  sentFolderPath(accountId: string): string | undefined {
+    return (
+      this.db
+        .prepare("SELECT path FROM folder WHERE account_id = ? AND role = 'sent' LIMIT 1")
+        .get(accountId) as { path: string } | undefined
+    )?.path
+  }
+
   /** Every message in the conversation (all folders of the account), oldest first. */
   getThread(id: string): MessageRow[] {
     const m = this.getMessage(id)
@@ -474,6 +498,168 @@ export class MailStore {
     return !!this.db
       .prepare('SELECT 1 FROM image_allow WHERE address = ?')
       .get(address.trim().toLowerCase())
+  }
+
+  // ---- compose: signatures, drafts, outbox, contacts ---------------------------
+
+  setSignature(accountId: string, signature: string): void {
+    this.db.prepare('UPDATE account SET signature = ? WHERE id = ?').run(signature, accountId)
+  }
+
+  saveDraft(id: string, accountId: string, payload: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO draft (id, account_id, payload, updated_at) VALUES (?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET account_id = excluded.account_id,
+                                       payload = excluded.payload,
+                                       updated_at = excluded.updated_at`
+      )
+      .run(id, accountId, payload, Date.now())
+  }
+
+  getDraft(id: string): string | undefined {
+    return (
+      this.db.prepare('SELECT payload FROM draft WHERE id = ?').get(id) as
+        | { payload: string }
+        | undefined
+    )?.payload
+  }
+
+  listDrafts(): { id: string; accountId: string; payload: string; updatedAt: number }[] {
+    return (
+      this.db
+        .prepare('SELECT id, account_id, payload, updated_at FROM draft ORDER BY updated_at DESC')
+        .all() as { id: string; account_id: string; payload: string; updated_at: number }[]
+    ).map((r) => ({
+      id: r.id,
+      accountId: r.account_id,
+      payload: r.payload,
+      updatedAt: r.updated_at
+    }))
+  }
+
+  deleteDraft(id: string): void {
+    this.db.prepare('DELETE FROM draft WHERE id = ?').run(id)
+  }
+
+  queueOutbox(o: {
+    id: string
+    accountId: string
+    payload: string
+    sendAt: number
+    subject: string
+    to: string[]
+  }): void {
+    this.db
+      .prepare(
+        `INSERT INTO outbox (id, account_id, payload, send_at, state, subject, to_text, created_at)
+         VALUES (?, ?, ?, ?, 'queued', ?, ?, ?)`
+      )
+      .run(o.id, o.accountId, o.payload, o.sendAt, o.subject, JSON.stringify(o.to), Date.now())
+  }
+
+  getOutbox(id: string):
+    | {
+        id: string
+        accountId: string
+        payload: string
+        sendAt: number
+        state: 'queued' | 'sending' | 'sent' | 'failed'
+        error: string | null
+        subject: string
+        to: string[]
+      }
+    | undefined {
+    const r = this.db.prepare('SELECT * FROM outbox WHERE id = ?').get(id) as
+      | {
+          id: string
+          account_id: string
+          payload: string
+          send_at: number
+          state: 'queued' | 'sending' | 'sent' | 'failed'
+          error: string | null
+          subject: string
+          to_text: string
+        }
+      | undefined
+    return (
+      r && {
+        id: r.id,
+        accountId: r.account_id,
+        payload: r.payload,
+        sendAt: r.send_at,
+        state: r.state,
+        error: r.error,
+        subject: r.subject,
+        to: JSON.parse(r.to_text) as string[]
+      }
+    )
+  }
+
+  setOutboxState(id: string, state: 'queued' | 'sending' | 'sent' | 'failed', error: string | null = null): void {
+    this.db.prepare('UPDATE outbox SET state = ?, error = ? WHERE id = ?').run(state, error, id)
+  }
+
+  deleteOutbox(id: string): void {
+    this.db.prepare('DELETE FROM outbox WHERE id = ?').run(id)
+  }
+
+  /** Queued items whose undo window has passed, plus any left 'sending' by a crash. */
+  dueOutbox(now: number): string[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT id FROM outbox WHERE (state = 'queued' AND send_at <= ?) OR state = 'sending'
+            ORDER BY send_at`
+        )
+        .all(now) as { id: string }[]
+    ).map((r) => r.id)
+  }
+
+  listOutbox(now: number): ReturnType<MailStore['getOutbox']>[] {
+    // 'sent' rows only linger a minute so the UI can confirm them.
+    this.db.prepare("DELETE FROM outbox WHERE state = 'sent' AND created_at < ?").run(now - 60_000)
+    const ids = this.db.prepare('SELECT id FROM outbox ORDER BY created_at').all() as { id: string }[]
+    return ids.map((r) => this.getOutbox(r.id))
+  }
+
+  /** People you have mail with: senders, ranked by volume, plus recipients of your sent mail. */
+  searchContacts(q: string, limit = 8): { name: string; address: string }[] {
+    const like = `%${q.replace(/[%_]/g, '')}%`
+    const seen = new Map<string, { name: string; address: string; n: number }>()
+    const add = (name: string, address: string, weight: number) => {
+      const key = address.toLowerCase()
+      if (!key.includes('@')) return
+      const cur = seen.get(key)
+      if (cur) {
+        cur.n += weight
+        if (!cur.name && name) cur.name = name
+      } else seen.set(key, { name, address, n: weight })
+    }
+    const senders = this.db
+      .prepare(
+        `SELECT from_name, from_addr, COUNT(*) AS c FROM message
+          WHERE from_addr LIKE ? OR from_name LIKE ?
+          GROUP BY lower(from_addr) ORDER BY c DESC LIMIT 50`
+      )
+      .all(like, like) as { from_name: string; from_addr: string; c: number }[]
+    for (const s of senders) add(s.from_name, s.from_addr, s.c)
+    const sent = this.db
+      .prepare(
+        `SELECT m.to_addrs FROM message m JOIN folder f ON f.id = m.folder_id
+          WHERE f.role = 'sent' AND m.to_addrs LIKE ? LIMIT 200`
+      )
+      .all(like) as { to_addrs: string }[]
+    for (const r of sent) {
+      for (const a of r.to_addrs.split(',')) {
+        const address = a.trim()
+        if (address.toLowerCase().includes(q.toLowerCase())) add('', address, 3)
+      }
+    }
+    return [...seen.values()]
+      .sort((a, b) => b.n - a.n)
+      .slice(0, limit)
+      .map(({ name, address }) => ({ name, address }))
   }
 
   /** Recomputes conversation membership for one account (call after its messages change). */

@@ -5,6 +5,7 @@ import {
   Inbox,
   Layers,
   type LucideIcon,
+  PenLine,
   Plus,
   RefreshCw,
   Send,
@@ -46,6 +47,9 @@ export default function Sidebar({
   selection,
   onSelect,
   onAdd,
+  onCompose,
+  onDrafts,
+  draftCount,
   onRemove,
   onResync
 }: {
@@ -54,6 +58,9 @@ export default function Sidebar({
   selection: Selection
   onSelect: (s: Selection) => void
   onAdd: () => void
+  onCompose: () => void
+  onDrafts: () => void
+  draftCount: number
   onRemove: (id: string) => void
   onResync: (id: string) => void
 }) {
@@ -66,6 +73,14 @@ export default function Sidebar({
       className="flex w-(--rail-w) shrink-0 flex-col border-r border-line bg-rail"
     >
       <div className="flex-1 space-y-5 overflow-y-auto p-3">
+        <button
+          onClick={onCompose}
+          disabled={accounts.length === 0}
+          className="flex h-9 w-full items-center justify-center gap-2 rounded-md bg-accent font-medium text-on-accent transition-colors duration-(--dur-fast) hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <PenLine size={16} strokeWidth={1.75} aria-hidden />
+          Compose
+        </button>
         <button
           className={row(isUnified)}
           aria-current={isUnified ? 'page' : undefined}
@@ -146,6 +161,13 @@ export default function Sidebar({
       </div>
 
       <div className="space-y-2 border-t border-line p-3">
+        {draftCount > 0 && (
+          <button className={row(false)} onClick={onDrafts}>
+            <FileText {...iconProps} />
+            <span className="flex-1">Drafts</span>
+            <span className="num text-sm text-ink-2">{draftCount}</span>
+          </button>
+        )}
         <ThemeSwitch />
         <button
           onClick={onAdd}

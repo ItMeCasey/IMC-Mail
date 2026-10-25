@@ -43,6 +43,10 @@ export class SyncManager {
     return this.get(accountId).setFlags(path, uid, change)
   }
 
+  append(accountId: string, path: string, raw: Buffer) {
+    return this.get(accountId).append(path, raw)
+  }
+
   resync(accountId: string): void {
     this.running.get(accountId)?.resync()
   }

@@ -1,12 +1,19 @@
 import { z } from 'zod'
 import {
   accountSchema,
+  contactSchema,
+  draftAttachmentSchema,
+  draftSchema,
+  draftSummarySchema,
   folderSchema,
   imapAccountInputSchema,
   messageQuerySchema,
   messageDetailSchema,
   messageSummarySchema,
   oauthProviderIdSchema,
+  outboxItemSchema,
+  replyContextSchema,
+  replyModeSchema,
   threadSchema
 } from './schemas'
 
@@ -96,6 +103,54 @@ export const ipcContract = {
     input: z.object({ address: z.string().min(3).max(320) }),
     output: z.undefined()
   },
+  'accounts:setSignature': {
+    input: z.object({ id: z.string(), signature: z.string().max(2000) }),
+    output: z.undefined()
+  },
+  /** Quoted context for replying to or forwarding a message. */
+  'compose:replyContext': {
+    input: z.object({ messageId: z.string(), mode: replyModeSchema }),
+    output: replyContextSchema
+  },
+  /** Vets files and returns them as attachments; with no paths, shows a file picker. */
+  'compose:attach': {
+    input: z.object({ paths: z.array(z.string()).max(50).optional() }),
+    output: z.array(draftAttachmentSchema)
+  },
+  /** Queues the message. It goes out after the undo window unless compose:undo is called. */
+  'compose:send': {
+    input: draftSchema,
+    output: z.object({ outboxId: z.string(), sendAt: z.number() })
+  },
+  /** Cancels a queued or failed send and returns the draft so it can be edited again. */
+  'compose:undo': {
+    input: z.object({ outboxId: z.string() }),
+    output: draftSchema.nullable()
+  },
+  'compose:saveDraft': {
+    input: draftSchema,
+    output: z.object({ id: z.string() })
+  },
+  'compose:drafts': {
+    input: z.undefined(),
+    output: z.array(draftSummarySchema)
+  },
+  'compose:loadDraft': {
+    input: z.object({ id: z.string() }),
+    output: draftSchema.nullable()
+  },
+  'compose:discardDraft': {
+    input: z.object({ id: z.string() }),
+    output: z.undefined()
+  },
+  'contacts:search': {
+    input: z.object({ q: z.string().max(100) }),
+    output: z.array(contactSchema)
+  },
+  'outbox:list': {
+    input: z.undefined(),
+    output: z.array(outboxItemSchema)
+  },
   /** Asks where to save, then writes the attachment. `saved` is the path, or null if cancelled. */
   'attachments:save': {
     input: z.object({ messageId: z.string(), attachmentId: z.string() }),
@@ -106,7 +161,9 @@ export const ipcContract = {
 /** Main -> renderer pushes. */
 export const ipcEvents = {
   /** Something in the local cache changed for this account. */
-  'sync:changed': z.object({ accountId: z.string() })
+  'sync:changed': z.object({ accountId: z.string() }),
+  /** The outbox changed: a message was queued, sent, failed, or undone. */
+  'outbox:changed': z.object({})
 } as const
 
 export type IpcContract = typeof ipcContract

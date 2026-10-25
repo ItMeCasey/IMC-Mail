@@ -4,14 +4,17 @@ import {
   ChevronDown,
   ChevronRight,
   ImageOff,
+  Forward,
   Mail,
   MailOpen,
+  Reply,
+  ReplyAll,
   Paperclip,
   Star,
   TriangleAlert,
   X
 } from 'lucide-react'
-import type { Attachment, MessageDetail, Thread } from '@imc/core'
+import type { Attachment, MessageDetail, ReplyMode, Thread } from '@imc/core'
 import EmailFrame from './EmailFrame'
 
 const dateFmt = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
@@ -167,12 +170,14 @@ export default function ReadingPane({
   thread,
   loading,
   error,
-  onClose
+  onClose,
+  onReply
 }: {
   thread: Thread | undefined
   loading: boolean
   error: unknown
   onClose: () => void
+  onReply: (messageId: string, mode: ReplyMode) => void
 }) {
   const qc = useQueryClient()
   const [open, setOpen] = useState<Record<string, boolean>>({})
@@ -210,6 +215,16 @@ export default function ReadingPane({
         </div>
         {selected && (
           <>
+            <button className={iconBtn} aria-label="Reply" title="Reply" onClick={() => onReply(selected.id, 'reply')}>
+              <Reply size={16} strokeWidth={1.75} aria-hidden />
+            </button>
+            <button className={iconBtn} aria-label="Reply all" title="Reply all" onClick={() => onReply(selected.id, 'replyAll')}>
+              <ReplyAll size={16} strokeWidth={1.75} aria-hidden />
+            </button>
+            <button className={iconBtn} aria-label="Forward" title="Forward" onClick={() => onReply(selected.id, 'forward')}>
+              <Forward size={16} strokeWidth={1.75} aria-hidden />
+            </button>
+            <span className="mx-1 h-5 w-px bg-line" aria-hidden />
             <button
               className={iconBtn}
               aria-label={selected.unread ? 'Mark as read' : 'Mark as unread'}

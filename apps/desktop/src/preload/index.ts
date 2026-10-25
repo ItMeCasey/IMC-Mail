@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import {
   ipcChannels,
   ipcEventNames,
@@ -16,6 +16,10 @@ const api = {
   invoke<C extends IpcChannel>(channel: C, input?: IpcInput<C>): Promise<IpcOutput<C>> {
     if (!channels.has(channel)) return Promise.reject(new Error(`Unknown channel: ${channel}`))
     return ipcRenderer.invoke(channel, input)
+  },
+  /** The on-disk path of a dropped or picked File (browsers hide it; Electron exposes it here). */
+  getFilePath(file: File): string {
+    return webUtils.getPathForFile(file)
   },
   /** Subscribes to a main-process push; returns an unsubscribe function. */
   on<E extends IpcEvent>(event: E, cb: (payload: IpcEventPayload<E>) => void): () => void {

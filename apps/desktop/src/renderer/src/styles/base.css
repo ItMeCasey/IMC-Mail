@@ -1,6 +1,7 @@
 /* Global defaults, including the browser surfaces nobody draws: selection, caret, scrollbars,
    focus, form-control accents. Everything reads semantic tokens from tokens.css. */
 
+@layer base {
 html,
 body,
 #root {
@@ -82,7 +83,9 @@ dialog {
 dialog::backdrop {
   background: var(--scrim);
 }
+}
 
+@layer components {
 /* Data: tabular numerals so track numbers, counts, and times line up. */
 .num {
   font-variant-numeric: tabular-nums;
@@ -142,4 +145,44 @@ dialog::backdrop {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
   }
+}
+
+/* Composer editor (TipTap). Quote bars use a neutral 1px rule, not a colored stripe. */
+.composer-body {
+  min-height: 12rem;
+  outline: none;
+  line-height: var(--leading-prose);
+  font-size: var(--text-md);
+}
+.composer-body p {
+  margin: 0 0 0.75em;
+}
+.composer-body ul,
+.composer-body ol {
+  margin: 0 0 0.75em;
+  padding-left: 1.5rem;
+}
+.composer-body ul {
+  list-style: disc;
+}
+.composer-body ol {
+  list-style: decimal;
+}
+.composer-body blockquote {
+  margin: 0 0 0.75em;
+  padding-left: 1rem;
+  border-left: 1px solid var(--line-strong);
+  color: var(--ink-2);
+}
+.composer-body a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.composer-body p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  color: var(--ink-3);
+  pointer-events: none;
+}
 }

@@ -77,6 +77,7 @@ export default function MessageList({
   accounts,
   loading,
   selectedId,
+  forceCompact = false,
   onSelect,
   onAdd
 }: {
@@ -85,6 +86,8 @@ export default function MessageList({
   accounts: Account[]
   loading: boolean
   selectedId: string | null
+  /** Keep the narrow two-line layout even with no message open (the composer is showing). */
+  forceCompact?: boolean
   onSelect: (id: string) => void
   onAdd: () => void
 }) {
@@ -92,7 +95,7 @@ export default function MessageList({
   const email = new Map(accounts.map((a) => [a.id, a.email]))
   const empty = !loading && messages.length === 0
   // With a message open the sheet narrows to a two-line list so the reading pane has room.
-  const compact = selectedId !== null
+  const compact = forceCompact || selectedId !== null
 
   const move = (delta: number) => {
     const i = messages.findIndex((m) => m.id === selectedId)

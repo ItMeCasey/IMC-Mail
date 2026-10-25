@@ -74,5 +74,28 @@ export const migrations: readonly string[] = [
   );
 
   CREATE TABLE image_allow (address TEXT PRIMARY KEY);
+  `,
+  `
+  ALTER TABLE account ADD COLUMN signature TEXT NOT NULL DEFAULT '';
+
+  CREATE TABLE draft (
+    id         TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+    payload    TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
+  -- Queued sends survive a restart. 'sent' rows are kept briefly so the UI can confirm them.
+  CREATE TABLE outbox (
+    id         TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+    payload    TEXT NOT NULL,
+    send_at    INTEGER NOT NULL,
+    state      TEXT NOT NULL DEFAULT 'queued',
+    error      TEXT,
+    subject    TEXT NOT NULL DEFAULT '',
+    to_text    TEXT NOT NULL DEFAULT '[]',
+    created_at INTEGER NOT NULL
+  );
   `
 ]

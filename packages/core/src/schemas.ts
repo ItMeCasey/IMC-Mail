@@ -24,7 +24,9 @@ export const accountSchema = z.object({
   displayName: z.string(),
   color: z.string(),
   syncState: syncStateSchema,
-  lastError: z.string().nullable()
+  lastError: z.string().nullable(),
+  /** Appended to new messages from this account. Plain text. */
+  signature: z.string()
 })
 export type Account = z.infer<typeof accountSchema>
 
@@ -129,3 +131,71 @@ export const messageQuerySchema = z.object({
   limit: z.number().int().min(1).max(500).default(100),
   offset: z.number().int().min(0).default(0)
 })
+
+// ---- Compose ---------------------------------------------------------------
+
+const recipients = z.array(z.string().trim().min(3).max(320)).max(200)
+
+export const draftAttachmentSchema = z.object({
+  id: z.string(),
+  filename: z.string().max(255),
+  size: z.number().int(),
+  /** A file the main process vetted when it was attached. */
+  path: z.string()
+})
+export type DraftAttachment = z.infer<typeof draftAttachmentSchema>
+
+export const draftSchema = z.object({
+  /** Set once the draft has been saved locally. */
+  id: z.string().optional(),
+  accountId: z.string(),
+  to: recipients,
+  cc: recipients,
+  bcc: recipients,
+  subject: z.string().max(998),
+  html: z.string().max(5_000_000),
+  /** Message-ID of the message being replied to, with angle brackets. */
+  inReplyTo: z.string().optional(),
+  references: z.array(z.string()).max(100).optional(),
+  attachments: z.array(draftAttachmentSchema).max(50)
+})
+export type Draft = z.infer<typeof draftSchema>
+
+export const replyModeSchema = z.enum(['reply', 'replyAll', 'forward'])
+export type ReplyMode = z.infer<typeof replyModeSchema>
+
+export const replyContextSchema = z.object({
+  accountId: z.string(),
+  to: z.array(z.string()),
+  cc: z.array(z.string()),
+  subject: z.string(),
+  /** The quoted original, already sanitized. */
+  html: z.string(),
+  inReplyTo: z.string().optional(),
+  references: z.array(z.string())
+})
+export type ReplyContext = z.infer<typeof replyContextSchema>
+
+export const draftSummarySchema = z.object({
+  id: z.string(),
+  accountId: z.string(),
+  subject: z.string(),
+  to: z.array(z.string()),
+  updatedAt: z.number()
+})
+export type DraftSummary = z.infer<typeof draftSummarySchema>
+
+export const outboxItemSchema = z.object({
+  id: z.string(),
+  accountId: z.string(),
+  subject: z.string(),
+  to: z.array(z.string()),
+  state: z.enum(['queued', 'sending', 'sent', 'failed']),
+  error: z.string().nullable(),
+  /** Epoch ms when a queued message actually goes out; until then it can be undone. */
+  sendAt: z.number()
+})
+export type OutboxItem = z.infer<typeof outboxItemSchema>
+
+export const contactSchema = z.object({ name: z.string(), address: z.string() })
+export type Contact = z.infer<typeof contactSchema>

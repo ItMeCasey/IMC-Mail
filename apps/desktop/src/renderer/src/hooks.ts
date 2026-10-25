@@ -23,6 +23,7 @@ export function useSyncInvalidation(): void {
   const qc = useQueryClient()
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined
+    const offOutbox = window.imc.on('outbox:changed', () => void qc.invalidateQueries({ queryKey: ['outbox'] }))
     const off = window.imc.on('sync:changed', () => {
       clearTimeout(timer)
       timer = setTimeout(() => void qc.invalidateQueries(), 250)
@@ -30,6 +31,7 @@ export function useSyncInvalidation(): void {
     return () => {
       clearTimeout(timer)
       off()
+      offOutbox()
     }
   }, [qc])
 }
@@ -41,3 +43,9 @@ export const useThread = (id: string | null) =>
     enabled: id !== null,
     retry: false
   })
+
+export const useOutbox = () =>
+  useQuery({ queryKey: ['outbox'], queryFn: () => window.imc.invoke('outbox:list') })
+
+export const useDrafts = () =>
+  useQuery({ queryKey: ['drafts'], queryFn: () => window.imc.invoke('compose:drafts') })

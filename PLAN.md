@@ -75,6 +75,8 @@ SQLite: accounts, folders, messages, threads, attachments, FTS,
 
 > **Phase 2 status (built):** message bodies (on-demand download, cached), reading pane, conversation threading across folders, sandboxed HTML with remote images blocked by default, attachment save, read/unread and star with rollback. **Still open from this phase:** archive/delete/move, labels, snooze, attachment preview, and "load older mail" backfill.
 
+> **Phase 3 status (built):** rich-text composer (TipTap), reply / reply-all / forward with quoted original and threading headers, recipient chips with suggestions from your mail, attachments (picker and drag-drop, 25 MB cap), per-account signature, From-account switch, SMTP send (password and OAuth), 10-second undo send backed by a persisted outbox, local autosaved drafts, Sent copy for plain IMAP servers. **Still open:** scheduled send, templates/snippets, drafts synced to the IMAP Drafts folder, forwarding attachments, inline images, an attachment-reminder prompt.
+
 ### Phase 3: Composer and sending
 - TipTap editor: formatting, lists, links, quotes, inline images/GIFs, attachments (drag-drop, size warnings).
 - From-account switcher mid-draft, per-account signatures, reply / reply-all / forward with correct headers (`In-Reply-To`, `References`).

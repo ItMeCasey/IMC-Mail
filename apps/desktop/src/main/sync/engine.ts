@@ -233,6 +233,13 @@ export class AccountSync {
     }
   }
 
+  /** Files a copy of a sent message into a folder, marked as read. */
+  async append(path: string, raw: Buffer): Promise<void> {
+    const client = this.client
+    if (!client?.usable) throw new Error('Offline: could not copy the message to Sent')
+    await client.append(path, raw, ['\\Seen'])
+  }
+
   /** Adds and removes IMAP flags on one message. */
   async setFlags(
     path: string,
