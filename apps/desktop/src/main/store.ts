@@ -1,4 +1,18 @@
 import { randomUUID } from 'node:crypto'
+import { buildSearch, parseQuery, SEARCH_LIMIT } from './search'
+import {
+  assess,
+  type CalendarEvent,
+  type Label,
+  type CalendarResponse,
+  type Template,
+  classify,
+  type Category,
+  type Deal,
+  type DealPatch,
+  type RiskLevel,
+  type ViewCounts
+} from '@imc/core'
 import { computeThreads, normalizeSubject } from './threading'
 import type {
   Account,
@@ -52,6 +66,13 @@ export interface FetchedMessage {
   refs: string[]
 }
 
+/** A meeting as stored: the public shape plus what only the app needs. */
+export interface StoredEvent extends CalendarEvent {
+  exdates: number[]
+  free: boolean
+  updatedAt: number
+}
+
 export interface BodyRow {
   html: string | null
   text: string
@@ -59,6 +80,10 @@ export interface BodyRow {
   cc: string
   attachments: Attachment[]
   truncated: boolean
+  /** For the scam shield; absent on bodies cached before it existed. */
+  replyTo?: string
+  authResults?: string
+  links?: { href: string; text: string }[]
 }
 
 export interface MessageRow {
@@ -75,10 +100,48 @@ export interface MessageRow {
   date: number
   flags: string
   snippet: string
+  category: Category | null
+  categoryManual: Category | null
+  risk: RiskLevel | null
+  riskReasons: string
+  riskSafe: boolean
 }
+
+/** The rules' verdict unless you overrode it. */
+export const EFFECTIVE_CATEGORY = "COALESCE(m.category_manual, m.category, 'other')"
+/** What the scam shield says, unless you marked the message safe. */
+export const EFFECTIVE_RISK = "CASE WHEN m.risk_safe = 1 THEN 'none' ELSE COALESCE(m.risk, 'none') END"
+const SUSPICIOUS = `(m.risk_safe = 0 AND m.risk IN ('caution', 'danger') AND f.role NOT IN ('trash', 'junk'))`
+/** A message carrying the label @labelId (labels hang on the Message-ID). */
+const LABELED = `EXISTS (SELECT 1 FROM message_label ml WHERE ml.account_id = m.account_id AND ml.rfc_id = m.message_id AND ml.label_id = @labelId)`
+/** Excludes snoozed messages from a query over message m. */
+const NOT_SNOOZED = 'NOT EXISTS (SELECT 1 FROM snooze sz WHERE sz.message_id = m.id)'
+const REPLY_WINDOW_MS = 30 * 24 * 3600 * 1000
+const WAIT_AFTER_MS = 3 * 24 * 3600 * 1000
+const OWN = '(SELECT lower(email) FROM account)'
+/** Later message in the same conversation (so this one is not the latest). */
+const NO_LATER = `NOT EXISTS (SELECT 1 FROM message t WHERE t.thread_id IS NOT NULL AND t.thread_id = m.thread_id
+     AND (t.date > m.date OR (t.date = m.date AND t.id > m.id)))`
+/** Mail you owe a reply: the latest message in its conversation, from someone else. */
+const NEEDS_REPLY = `(f.role = 'inbox' AND lower(m.from_addr) NOT IN ${OWN}
+  AND lower(m.from_addr) NOT LIKE 'no-reply@%' AND lower(m.from_addr) NOT LIKE 'noreply@%'
+  AND lower(m.from_addr) NOT LIKE 'donotreply@%' AND lower(m.from_addr) NOT LIKE 'do-not-reply@%'
+  AND lower(m.from_addr) NOT LIKE 'mailer-daemon@%'
+  AND instr(m.flags, '\\Answered') = 0
+  AND ${EFFECTIVE_CATEGORY} NOT IN ('cold', 'platform')
+  AND m.date >= @since AND ${NO_LATER})`
+/** Something you sent, a few days ago, that nobody has answered. */
+const WAITING = `(f.role = 'sent' AND lower(m.from_addr) IN ${OWN} AND m.to_addrs != ''
+  AND m.date >= @since AND m.date <= @waitBefore AND ${NO_LATER})`
 
 const SEEN = '\\Seen'
 const FLAGGED = '\\Flagged'
+
+/** The columns the scam shield fills in for one message. */
+function riskColumns(input: Parameters<typeof assess>[0]): { risk: RiskLevel; riskReasons: string } {
+  const r = assess(input)
+  return { risk: r.level, riskReasons: JSON.stringify(r.reasons) }
+}
 
 /** All SQL for the mail cache lives here so the sync engine and IPC layer share one surface. */
 export class MailStore {
@@ -200,6 +263,7 @@ export class MailStore {
            FROM folder f
            JOIN account a ON a.id = f.account_id
            LEFT JOIN message m ON m.folder_id = f.id
+                AND NOT EXISTS (SELECT 1 FROM snooze sz WHERE sz.message_id = m.id)
           GROUP BY f.id
           ORDER BY a.created_at, a.email,
                    CASE f.role WHEN 'inbox' THEN 0 WHEN 'drafts' THEN 1 WHEN 'sent' THEN 2
@@ -227,6 +291,18 @@ export class MailStore {
     }))
   }
 
+  /** Unread mail across all inboxes, not counting snoozed messages. */
+  inboxUnread(): number {
+    const r = this.db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM message m JOIN folder f ON f.id = m.folder_id
+          WHERE f.role = 'inbox' AND instr(m.flags, '${SEEN}') = 0
+            AND NOT EXISTS (SELECT 1 FROM snooze sz WHERE sz.message_id = m.id)`
+      )
+      .get() as { n: number }
+    return r.n
+  }
+
   // ---- messages ----------------------------------------------------------
 
   /** Wipes a folder's cached messages, used when UIDVALIDITY changes. */
@@ -235,6 +311,11 @@ export class MailStore {
   }
 
   /** The lowest UID of the newest `window` cached messages, or null if the folder is empty. */
+  /** The lowest UID cached in a folder, or null if it is empty. */
+  oldestUid(folderId: string): number | null {
+    return (this.db.prepare('SELECT MIN(uid) AS uid FROM message WHERE folder_id = ?').get(folderId) as { uid: number | null }).uid
+  }
+
   windowStartUid(folderId: string, window: number): number | null {
     const r = this.db
       .prepare(
@@ -254,17 +335,20 @@ export class MailStore {
     folderId: string,
     fetched: FetchedMessage[],
     deleteMissingFrom: number | null
-  ): void {
+  ): string[] {
     const upsert = this.db.prepare(
       `INSERT INTO message
          (id, account_id, folder_id, uid, message_id, from_name, from_addr, to_addrs,
-          subject, date, flags, refs)
+          subject, date, flags, refs, category, risk, risk_reasons)
        VALUES (@id, @accountId, @folderId, @uid, @messageId, @fromName, @fromAddr, @to,
-               @subject, @date, @flags, @refs)
+               @subject, @date, @flags, @refs, @category, @risk, @riskReasons)
        ON CONFLICT(folder_id, uid) DO UPDATE SET flags = excluded.flags, refs = excluded.refs`
     )
+    const known = this.db.prepare('SELECT 1 FROM message WHERE folder_id = ? AND uid = ?')
+    const fresh: string[] = []
     this.db.transaction(() => {
       for (const m of fetched) {
+        if (!known.get(folderId, m.uid)) fresh.push(`${folderId}:${m.uid}`)
         upsert.run({
           id: `${folderId}:${m.uid}`,
           accountId,
@@ -277,7 +361,9 @@ export class MailStore {
           subject: m.subject,
           date: m.date,
           flags: m.flags.join(' '),
-          refs: m.refs.join(' ')
+          refs: m.refs.join(' '),
+          category: classify({ fromAddr: m.fromAddr, fromName: m.fromName, subject: m.subject }).category,
+          ...riskColumns({ fromAddr: m.fromAddr, fromName: m.fromName, subject: m.subject })
         })
       }
       if (deleteMissingFrom !== null) {
@@ -289,17 +375,36 @@ export class MailStore {
         for (const { uid } of cached) if (!present.has(uid)) del.run(folderId, uid)
       }
     })()
+    return fresh
   }
 
-  listMessages(q: {
-    accountId?: string
-    folderId?: string
-    limit: number
-    offset: number
-  }): MessageSummary[] {
+  listMessages(
+    q: {
+      accountId?: string
+      folderId?: string
+      limit: number
+      offset: number
+      view?: 'needsReply' | 'waiting' | 'suspicious' | 'snoozed' | 'followUp'
+      category?: Category
+      labelId?: string
+    },
+    now?: number
+  ): MessageSummary[] {
     const where: string[] = []
     const args: Record<string, unknown> = { limit: q.limit, offset: q.offset }
-    if (q.folderId) {
+    if (q.view !== 'snoozed') where.push(NOT_SNOOZED)
+    if (q.labelId) {
+      where.push(LABELED)
+      args.labelId = q.labelId
+    } else if (q.view === 'followUp') {
+      where.push('EXISTS (SELECT 1 FROM followup fu WHERE fu.message_id = m.id)')
+    } else if (q.view === 'snoozed') {
+      where.push('EXISTS (SELECT 1 FROM snooze sz WHERE sz.message_id = m.id)')
+    } else if (q.view) {
+      where.push(q.view === 'needsReply' ? NEEDS_REPLY : q.view === 'waiting' ? WAITING : SUSPICIOUS)
+      args.since = (now ?? Date.now()) - REPLY_WINDOW_MS
+      args.waitBefore = (now ?? Date.now()) - WAIT_AFTER_MS
+    } else if (q.folderId) {
       where.push('m.folder_id = @folderId')
       args.folderId = q.folderId
     } else {
@@ -309,16 +414,23 @@ export class MailStore {
         args.accountId = q.accountId
       }
     }
+    if (q.category) {
+      where.push(`${EFFECTIVE_CATEGORY} = @category`)
+      args.category = q.category
+    }
     const rows = this.db
       .prepare(
         `SELECT m.id, m.account_id, m.folder_id, m.uid, m.from_name, m.from_addr,
-                m.subject, m.date, m.flags,
+                m.subject, m.date, m.flags, ${EFFECTIVE_CATEGORY} AS category, ${EFFECTIVE_RISK} AS risk,
+                (SELECT until FROM snooze sz WHERE sz.message_id = m.id) AS snoozed_until,
+                (SELECT due FROM followup fu WHERE fu.message_id = m.id) AS follow_up_at,
+                EXISTS (SELECT 1 FROM event_message em WHERE em.message_id = m.id) AS has_invite,
                 CASE WHEN m.thread_id IS NULL THEN 1
                      ELSE (SELECT COUNT(*) FROM message t WHERE t.thread_id = m.thread_id) END
                   AS thread_size
            FROM message m JOIN folder f ON f.id = m.folder_id
           WHERE ${where.join(' AND ')}
-          ORDER BY m.date DESC, m.uid DESC
+          ORDER BY ${q.view === 'snoozed' ? '(SELECT until FROM snooze sz WHERE sz.message_id = m.id) ASC' : q.view === 'followUp' ? '(SELECT due FROM followup fu WHERE fu.message_id = m.id) ASC' : 'm.date DESC, m.uid DESC'}
           LIMIT @limit OFFSET @offset`
       )
       .all(args) as {
@@ -332,6 +444,11 @@ export class MailStore {
       date: number
       flags: string
       thread_size: number
+      category: Category
+      risk: RiskLevel
+      snoozed_until: number | null
+      follow_up_at: number | null
+      has_invite: number
     }[]
     return rows.map((r) => ({
       id: r.id,
@@ -344,7 +461,69 @@ export class MailStore {
       date: r.date,
       unread: !r.flags.includes(SEEN),
       starred: r.flags.includes(FLAGGED),
-      threadSize: r.thread_size
+      threadSize: r.thread_size,
+      category: r.category,
+      risk: r.risk,
+      snoozedUntil: r.snoozed_until,
+      followUpAt: r.follow_up_at,
+      invite: r.has_invite === 1
+    }))
+  }
+
+  /** Full-text and filtered search over the local cache. Never throws on odd input. */
+  search(q: string, limit = SEARCH_LIMIT): MessageSummary[] {
+    if (!q.trim()) return []
+    const parsed = parseQuery(q)
+    const hasAnything =
+      parsed.fts !== null ||
+      parsed.is.length > 0 ||
+      parsed.hasAttachment ||
+      parsed.account.length > 0 ||
+      parsed.inFolder.length > 0 ||
+      parsed.category.length > 0 ||
+      parsed.before !== null ||
+      parsed.after !== null
+    if (!hasAnything) return []
+    const { sql, params } = buildSearch(parsed, limit)
+    let rows: {
+      id: string
+      account_id: string
+      folder_id: string
+      uid: number
+      from_name: string
+      from_addr: string
+      subject: string
+      date: number
+      flags: string
+      thread_size: number
+      category: Category
+      risk: RiskLevel
+      snoozed_until: number | null
+      follow_up_at: number | null
+      has_invite: number
+    }[]
+    try {
+      rows = this.db.prepare(sql).all(params) as typeof rows
+    } catch {
+      return [] // a query FTS5 still refuses is "no results", not a crash
+    }
+    return rows.map((r) => ({
+      id: r.id,
+      accountId: r.account_id,
+      folderId: r.folder_id,
+      uid: r.uid,
+      fromName: r.from_name,
+      fromAddr: r.from_addr,
+      subject: r.subject,
+      date: r.date,
+      unread: !r.flags.includes(SEEN),
+      starred: r.flags.includes(FLAGGED),
+      threadSize: r.thread_size,
+      category: r.category,
+      risk: r.risk,
+      snoozedUntil: r.snoozed_until,
+      followUpAt: r.follow_up_at,
+      invite: r.has_invite === 1
     }))
   }
 
@@ -354,7 +533,8 @@ export class MailStore {
     const r = this.db
       .prepare(
         `SELECT m.id, m.account_id, m.folder_id, f.path AS folder_path, m.uid, m.thread_id,
-                m.from_name, m.from_addr, m.to_addrs, m.subject, m.date, m.flags, m.snippet
+                m.from_name, m.from_addr, m.to_addrs, m.subject, m.date, m.flags, m.snippet,
+                m.category, m.category_manual, m.risk, m.risk_reasons, m.risk_safe
            FROM message m JOIN folder f ON f.id = m.folder_id WHERE m.id = ?`
       )
       .get(id) as
@@ -372,10 +552,20 @@ export class MailStore {
           date: number
           flags: string
           snippet: string
+          category: Category | null
+          category_manual: Category | null
+          risk: RiskLevel | null
+          risk_reasons: string
+          risk_safe: number
         }
       | undefined
     return (
       r && {
+        category: r.category,
+        categoryManual: r.category_manual,
+        risk: r.risk,
+        riskReasons: r.risk_reasons,
+        riskSafe: r.risk_safe === 1,
         id: r.id,
         accountId: r.account_id,
         folderId: r.folder_id,
@@ -391,6 +581,25 @@ export class MailStore {
         snippet: r.snippet
       }
     )
+  }
+
+  /** The account's folder for a role (e.g. 'trash'), if the server has one. */
+  findFolderByRole(accountId: string, role: FolderRole): { id: string; path: string } | undefined {
+    return this.db
+      .prepare('SELECT id, path FROM folder WHERE account_id = ? AND role = ? LIMIT 1')
+      .get(accountId, role) as { id: string; path: string } | undefined
+  }
+
+  getFolder(id: string): { id: string; accountId: string; path: string; role: FolderRole | null } | undefined {
+    const r = this.db
+      .prepare('SELECT id, account_id, path, role FROM folder WHERE id = ?')
+      .get(id) as { id: string; account_id: string; path: string; role: FolderRole | null } | undefined
+    return r && { id: r.id, accountId: r.account_id, path: r.path, role: r.role }
+  }
+
+  /** Drops a message from the cache (after it was moved or deleted on the server). */
+  removeMessage(id: string): void {
+    this.db.prepare('DELETE FROM message WHERE id = ?').run(id)
   }
 
   /** Threading headers of one message, for building a reply. */
@@ -435,10 +644,16 @@ export class MailStore {
           cc_text: string
           attachments: string
           truncated: number
+          reply_to: string
+          auth_results: string
+          links: string
         }
       | undefined
     return (
       r && {
+        replyTo: r.reply_to,
+        authResults: r.auth_results,
+        links: JSON.parse(r.links) as { href: string; text: string }[],
         html: r.html,
         text: r.text,
         to: r.to_text,
@@ -454,8 +669,9 @@ export class MailStore {
       this.db
         .prepare(
           `INSERT OR REPLACE INTO message_body
-             (message_id, html, text, to_text, cc_text, attachments, truncated, fetched_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+             (message_id, html, text, to_text, cc_text, attachments, truncated, fetched_at,
+              reply_to, auth_results, links)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .run(
           id,
@@ -465,9 +681,35 @@ export class MailStore {
           body.cc,
           JSON.stringify(body.attachments),
           body.truncated ? 1 : 0,
-          Date.now()
+          Date.now(),
+          body.replyTo ?? '',
+          body.authResults ?? '',
+          JSON.stringify(body.links ?? [])
         )
       this.db.prepare('UPDATE message SET snippet = ? WHERE id = ?').run(snippet, id)
+      const m = this.getMessage(id)
+      if (m) {
+        const category = classify({
+          fromAddr: m.fromAddr,
+          fromName: m.fromName,
+          subject: m.subject,
+          text: body.text || snippet
+        }).category
+        this.db.prepare('UPDATE message SET category = ? WHERE id = ?').run(category, id)
+        const cols = riskColumns({
+          fromAddr: m.fromAddr,
+          fromName: m.fromName,
+          subject: m.subject,
+          text: body.text || snippet,
+          replyTo: body.replyTo,
+          authResults: body.authResults,
+          links: body.links,
+          attachments: body.attachments.filter((a) => !a.inline)
+        })
+        this.db
+          .prepare('UPDATE message SET risk = ?, risk_reasons = ? WHERE id = ?')
+          .run(cols.risk, cols.riskReasons, id)
+      }
     })()
   }
 
@@ -498,6 +740,564 @@ export class MailStore {
     return !!this.db
       .prepare('SELECT 1 FROM image_allow WHERE address = ?')
       .get(address.trim().toLowerCase())
+  }
+
+  // ---- categories, smart views, deals --------------------------------------------
+
+  /** null puts the message back under the rules' control. */
+  setCategory(id: string, category: Category | null): void {
+    this.db.prepare('UPDATE message SET category_manual = ? WHERE id = ?').run(category, id)
+  }
+
+  /** Inbox messages by id, shaped for the notification rules. */
+  incoming(ids: string[]): {
+    id: string
+    fromName: string
+    fromAddr: string
+    subject: string
+    category: Category
+    risk: RiskLevel
+    date: number
+    unread: boolean
+  }[] {
+    const get = this.db.prepare(
+      `SELECT m.id, m.from_name, m.from_addr, m.subject, m.date, m.flags,
+              ${EFFECTIVE_CATEGORY} AS category, ${EFFECTIVE_RISK} AS risk
+         FROM message m JOIN folder f ON f.id = m.folder_id
+        WHERE m.id = ? AND f.role = 'inbox'`
+    )
+    const out = []
+    for (const id of ids) {
+      const r = get.get(id) as
+        | { id: string; from_name: string; from_addr: string; subject: string; date: number; flags: string; category: Category; risk: RiskLevel }
+        | undefined
+      if (r) {
+        out.push({
+          id: r.id,
+          fromName: r.from_name,
+          fromAddr: r.from_addr,
+          subject: r.subject,
+          category: r.category,
+          risk: r.risk,
+          date: r.date,
+          unread: !r.flags.includes(SEEN)
+        })
+      }
+    }
+    return out
+  }
+
+  snooze(id: string, until: number): void {
+    this.db
+      .prepare('INSERT INTO snooze (message_id, until) VALUES (?, ?) ON CONFLICT(message_id) DO UPDATE SET until = excluded.until')
+      .run(id, until)
+  }
+
+  unsnooze(id: string): void {
+    this.db.prepare('DELETE FROM snooze WHERE message_id = ?').run(id)
+  }
+
+  snoozedUntil(id: string): number | null {
+    return (
+      (this.db.prepare('SELECT until FROM snooze WHERE message_id = ?').get(id) as { until: number } | undefined)
+        ?.until ?? null
+    )
+  }
+
+  /** Snoozes whose time has come: removes them and returns the message ids. */
+  wakeDue(now: number): string[] {
+    const ids = (
+      this.db.prepare('SELECT message_id FROM snooze WHERE until <= ? ORDER BY until').all(now) as {
+        message_id: string
+      }[]
+    ).map((r) => r.message_id)
+    if (ids.length > 0) {
+      const del = this.db.prepare('DELETE FROM snooze WHERE message_id = ?')
+      this.db.transaction(() => ids.forEach((id) => del.run(id)))()
+    }
+    return ids
+  }
+
+  // ---- labels ------------------------------------------------------------------------
+
+  listLabels(): Label[] {
+    return this.db
+      .prepare(
+        `SELECT l.id, l.name,
+                (SELECT COUNT(*) FROM message m JOIN message_label ml
+                   ON ml.account_id = m.account_id AND ml.rfc_id = m.message_id
+                  WHERE ml.label_id = l.id) AS count
+           FROM label l ORDER BY l.name COLLATE NOCASE`
+      )
+      .all() as Label[]
+  }
+
+  createLabel(name: string): Label {
+    const clean = name.trim()
+    const existing = this.db.prepare('SELECT id, name FROM label WHERE name = ?').get(clean) as { id: string; name: string } | undefined
+    if (existing) return { ...existing, count: 0 }
+    const id = randomUUID()
+    this.db.prepare('INSERT INTO label (id, name) VALUES (?, ?)').run(id, clean)
+    return { id, name: clean, count: 0 }
+  }
+
+  deleteLabel(id: string): void {
+    this.db.prepare('DELETE FROM label WHERE id = ?').run(id)
+  }
+
+  labelIdsOf(messageDbId: string): string[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT ml.label_id FROM message m JOIN message_label ml
+              ON ml.account_id = m.account_id AND ml.rfc_id = m.message_id
+            WHERE m.id = ?`
+        )
+        .all(messageDbId) as { label_id: string }[]
+    ).map((r) => r.label_id)
+  }
+
+  /** Replaces a message's labels. A message with no Message-ID header cannot be labelled. */
+  setLabels(messageDbId: string, labelIds: string[]): void {
+    const m = this.db.prepare('SELECT account_id, message_id FROM message WHERE id = ?').get(messageDbId) as
+      | { account_id: string; message_id: string | null }
+      | undefined
+    if (!m) throw new Error('That message is no longer in the cache')
+    if (!m.message_id) throw new Error('This message has no Message-ID, so it cannot be labelled')
+    this.db.transaction(() => {
+      this.db.prepare('DELETE FROM message_label WHERE account_id = ? AND rfc_id = ?').run(m.account_id, m.message_id)
+      const ins = this.db.prepare('INSERT OR IGNORE INTO message_label (account_id, rfc_id, label_id) SELECT ?, ?, id FROM label WHERE id = ?')
+      for (const id of labelIds) ins.run(m.account_id, m.message_id, id)
+    })()
+  }
+
+  setFollowUp(id: string, due: number): void {
+    this.db
+      .prepare('INSERT INTO followup (message_id, due, fired) VALUES (?, ?, 0) ON CONFLICT(message_id) DO UPDATE SET due = excluded.due, fired = 0')
+      .run(id, due)
+  }
+
+  /** Remembers a reminder for a message that has just been sent, by its Message-ID. */
+  addPendingFollowUp(accountId: string, rfcId: string, due: number, now = Date.now()): void {
+    this.db
+      .prepare('INSERT OR REPLACE INTO pending_followup (account_id, rfc_id, due, created_at) VALUES (?, ?, ?, ?)')
+      .run(accountId, rfcId, due, now)
+  }
+
+  clearFollowUp(id: string): void {
+    this.db.prepare('DELETE FROM followup WHERE message_id = ?').run(id)
+  }
+
+  followUpAt(id: string): number | null {
+    return (
+      (this.db.prepare('SELECT due FROM followup WHERE message_id = ?').get(id) as { due: number } | undefined)?.due ?? null
+    )
+  }
+
+  /**
+   * Drops reminders whose conversation got a reply from someone else, then marks the reminders
+   * that are now due as shown and returns their message ids (each is returned once).
+   */
+  followUpTick(now: number): string[] {
+    return this.db.transaction(() => {
+      // Reminders chosen while sending attach to the sent copy once the Sent folder has it.
+      this.db
+        .prepare(
+          `INSERT OR IGNORE INTO followup (message_id, due, fired)
+           SELECT m.id, p.due, 0 FROM pending_followup p
+             JOIN message m ON m.account_id = p.account_id AND m.message_id = p.rfc_id
+             JOIN folder f ON f.id = m.folder_id AND f.role = 'sent'`
+        )
+        .run()
+      this.db
+        .prepare(
+          `DELETE FROM pending_followup WHERE created_at < ? OR EXISTS (
+             SELECT 1 FROM message m JOIN folder f ON f.id = m.folder_id AND f.role = 'sent'
+              WHERE m.account_id = pending_followup.account_id AND m.message_id = pending_followup.rfc_id)`
+        )
+        .run(now - 30 * 24 * 3600 * 1000)
+      this.db
+        .prepare(
+          `DELETE FROM followup WHERE message_id IN (
+             SELECT m0.message_id FROM followup m0 JOIN message m ON m.id = m0.message_id
+              WHERE m.thread_id IS NOT NULL AND EXISTS (
+                SELECT 1 FROM message t WHERE t.thread_id = m.thread_id AND t.date > m.date
+                   AND lower(t.from_addr) NOT IN ${OWN}))`
+        )
+        .run()
+      const ids = (
+        this.db.prepare('SELECT message_id FROM followup WHERE due <= ? AND fired = 0 ORDER BY due').all(now) as {
+          message_id: string
+        }[]
+      ).map((r) => r.message_id)
+      const mark = this.db.prepare('UPDATE followup SET fired = 1 WHERE message_id = ?')
+      ids.forEach((id) => mark.run(id))
+      return ids
+    })()
+  }
+
+  /** Sent messages as notification items: who you wrote to rather than who wrote. */
+  sentItems(ids: string[]): ReturnType<MailStore['incoming']> {
+    const get = this.db.prepare('SELECT id, to_addrs, subject, date FROM message WHERE id = ?')
+    const out: ReturnType<MailStore['incoming']> = []
+    for (const id of ids) {
+      const r = get.get(id) as { id: string; to_addrs: string; subject: string; date: number } | undefined
+      if (!r) continue
+      out.push({ id: r.id, fromName: r.to_addrs.split(',')[0]!.replace(/<.*>/, '').trim(), fromAddr: r.to_addrs, subject: r.subject, category: 'other', risk: 'none', date: r.date, unread: true })
+    }
+    return out
+  }
+
+  /** Tells the scam shield a message is fine (or takes that back). */
+  setRiskSafe(id: string, safe: boolean): void {
+    this.db.prepare('UPDATE message SET risk_safe = ? WHERE id = ?').run(safe ? 1 : 0, id)
+  }
+
+  /** Classifies mail cached before categories existed. Returns how many were filed. */
+  backfillCategories(limit = 5000): number {
+    const rows = this.db
+      .prepare(
+        `SELECT m.id, m.from_addr, m.from_name, m.subject, b.text
+           FROM message m LEFT JOIN message_body b ON b.message_id = m.id
+          WHERE m.category IS NULL OR m.risk IS NULL LIMIT ?`
+      )
+      .all(limit) as { id: string; from_addr: string; from_name: string; subject: string; text: string | null }[]
+    const set = this.db.prepare(
+      'UPDATE message SET category = ?, risk = ?, risk_reasons = ? WHERE id = ?'
+    )
+    this.db.transaction(() => {
+      for (const r of rows) {
+        const category = classify({
+          fromAddr: r.from_addr,
+          fromName: r.from_name,
+          subject: r.subject,
+          text: r.text ?? undefined
+        }).category
+        const cols = riskColumns({
+          fromAddr: r.from_addr,
+          fromName: r.from_name,
+          subject: r.subject,
+          text: r.text ?? undefined
+        })
+        set.run(category, cols.risk, cols.riskReasons, r.id)
+      }
+    })()
+    return rows.length
+  }
+
+  viewCounts(now = Date.now()): ViewCounts {
+    const since = now - REPLY_WINDOW_MS
+    const waitBefore = now - WAIT_AFTER_MS
+    const count = (cond: string) =>
+      (
+        this.db
+          .prepare(
+            `SELECT COUNT(*) AS n FROM message m JOIN folder f ON f.id = m.folder_id WHERE ${cond}`
+          )
+          .get({ since, waitBefore }) as { n: number }
+      ).n
+    const cats = this.db
+      .prepare(
+        `SELECT ${EFFECTIVE_CATEGORY} AS category, COUNT(*) AS total,
+                COALESCE(SUM(instr(m.flags, '${SEEN}') = 0), 0) AS unread
+           FROM message m JOIN folder f ON f.id = m.folder_id
+          WHERE f.role = 'inbox' AND ${NOT_SNOOZED} GROUP BY 1`
+      )
+      .all() as { category: Category; total: number; unread: number }[]
+    return {
+      needsReply: count(`${NEEDS_REPLY} AND ${NOT_SNOOZED}`),
+      waiting: count(`${WAITING} AND ${NOT_SNOOZED}`),
+      suspicious: count(`${SUSPICIOUS} AND ${NOT_SNOOZED}`),
+      snoozed: count('EXISTS (SELECT 1 FROM snooze sz WHERE sz.message_id = m.id)'),
+      followUp: count('EXISTS (SELECT 1 FROM followup fu WHERE fu.message_id = m.id)'),
+      categories: cats
+    }
+  }
+
+  private dealRow(r: {
+    id: string
+    account_id: string
+    message_id: string | null
+    brand: string
+    stage: Deal['stage']
+    rate: number | null
+    currency: string
+    deliverables: string
+    due_date: number | null
+    notes: string
+    created_at: number
+    updated_at: number
+    paid_at: number | null
+  }): Deal {
+    return {
+      id: r.id,
+      accountId: r.account_id,
+      messageId: r.message_id,
+      brand: r.brand,
+      stage: r.stage,
+      rate: r.rate,
+      currency: r.currency,
+      deliverables: r.deliverables,
+      dueDate: r.due_date,
+      notes: r.notes,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+      paidAt: r.paid_at
+    }
+  }
+
+  listDeals(): Deal[] {
+    return (this.db.prepare('SELECT * FROM deal ORDER BY updated_at DESC').all() as Parameters<MailStore['dealRow']>[0][]).map((r) => this.dealRow(r))
+  }
+
+  getDeal(id: string): Deal | undefined {
+    const r = this.db.prepare('SELECT * FROM deal WHERE id = ?').get(id) as Parameters<MailStore['dealRow']>[0] | undefined
+    return r && this.dealRow(r)
+  }
+
+  createDeal(d: { accountId: string; messageId: string | null; brand: string } & DealPatch, now = Date.now()): Deal {
+    const id = randomUUID()
+    this.db
+      .prepare(
+        `INSERT INTO deal (id, account_id, message_id, brand, stage, rate, currency, deliverables,
+                           due_date, notes, created_at, updated_at, paid_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        id,
+        d.accountId,
+        d.messageId,
+        d.brand,
+        d.stage ?? 'lead',
+        d.rate ?? null,
+        d.currency ?? 'USD',
+        d.deliverables ?? '',
+        d.dueDate ?? null,
+        d.notes ?? '',
+        now,
+        now,
+        d.stage === 'paid' ? now : null
+      )
+    return this.getDeal(id)!
+  }
+
+  updateDeal(id: string, patch: DealPatch, now = Date.now()): Deal {
+    const cur = this.getDeal(id)
+    if (!cur) throw new Error('That deal no longer exists')
+    const next = { ...cur, ...Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)) } as Deal
+    // Moving to Paid stamps the date; moving back clears it.
+    const paidAt = next.stage === 'paid' ? (cur.paidAt ?? now) : null
+    this.db
+      .prepare(
+        `UPDATE deal SET brand = ?, stage = ?, rate = ?, currency = ?, deliverables = ?, due_date = ?,
+                         notes = ?, updated_at = ?, paid_at = ? WHERE id = ?`
+      )
+      .run(next.brand, next.stage, next.rate, next.currency, next.deliverables, next.dueDate, next.notes, now, paidAt, id)
+    return this.getDeal(id)!
+  }
+
+  deleteDeal(id: string): void {
+    this.db.prepare('DELETE FROM deal WHERE id = ?').run(id)
+  }
+
+  // ---- calendar --------------------------------------------------------------------
+
+  private toEvent(r: {
+    id: string
+    account_id: string
+    uid: string
+    recurrence_id: number | null
+    sequence: number
+    summary: string
+    description: string
+    location: string
+    start: number
+    end: number
+    all_day: number
+    rrule: string | null
+    exdates: string
+    organizer: string | null
+    attendees: string
+    status: StoredEvent['status']
+    online_url: string | null
+    free: number
+    my_response: CalendarResponse | null
+    mine: number
+    updated_at: number
+  }): StoredEvent {
+    return {
+      id: r.id,
+      accountId: r.account_id,
+      uid: r.uid,
+      sequence: r.sequence,
+      recurrenceId: r.recurrence_id,
+      summary: r.summary,
+      description: r.description,
+      location: r.location,
+      start: r.start,
+      end: r.end,
+      allDay: r.all_day === 1,
+      rrule: r.rrule,
+      repeats: null,
+      exdates: JSON.parse(r.exdates) as number[],
+      organizer: r.organizer ? (JSON.parse(r.organizer) as StoredEvent['organizer']) : null,
+      attendees: JSON.parse(r.attendees) as StoredEvent['attendees'],
+      status: r.status,
+      onlineUrl: r.online_url,
+      free: r.free === 1,
+      myResponse: r.my_response,
+      mine: r.mine === 1,
+      messageId: null,
+      updatedAt: r.updated_at
+    }
+  }
+
+  getEvent(id: string): StoredEvent | undefined {
+    const r = this.db.prepare('SELECT * FROM event WHERE id = ?').get(id) as Parameters<MailStore['toEvent']>[0] | undefined
+    return r && this.toEvent(r)
+  }
+
+  /** The series and any overrides of one meeting uid, oldest first. */
+  eventsByUid(accountId: string, uid: string): StoredEvent[] {
+    return (
+      this.db
+        .prepare('SELECT * FROM event WHERE account_id = ? AND uid = ? ORDER BY recurrence_id IS NOT NULL, start')
+        .all(accountId, uid) as Parameters<MailStore['toEvent']>[0][]
+    ).map((r) => this.toEvent(r))
+  }
+
+  putEvent(e: StoredEvent): void {
+    this.db
+      .prepare(
+        `INSERT INTO event (id, account_id, uid, recurrence_id, sequence, summary, description, location,
+            start, end, all_day, rrule, exdates, organizer, attendees, status, online_url, free,
+            my_response, mine, updated_at)
+         VALUES (@id, @accountId, @uid, @recurrenceId, @sequence, @summary, @description, @location,
+            @start, @end, @allDay, @rrule, @exdates, @organizer, @attendees, @status, @onlineUrl, @free,
+            @myResponse, @mine, @updatedAt)
+         ON CONFLICT(id) DO UPDATE SET sequence = excluded.sequence, summary = excluded.summary,
+            description = excluded.description, location = excluded.location, start = excluded.start,
+            end = excluded.end, all_day = excluded.all_day, rrule = excluded.rrule,
+            exdates = excluded.exdates, organizer = excluded.organizer, attendees = excluded.attendees,
+            status = excluded.status, online_url = excluded.online_url, free = excluded.free,
+            my_response = excluded.my_response, mine = excluded.mine, updated_at = excluded.updated_at`
+      )
+      .run({
+        id: e.id,
+        accountId: e.accountId,
+        uid: e.uid,
+        recurrenceId: e.recurrenceId,
+        sequence: e.sequence,
+        summary: e.summary,
+        description: e.description,
+        location: e.location,
+        start: e.start,
+        end: e.end,
+        allDay: e.allDay ? 1 : 0,
+        rrule: e.rrule,
+        exdates: JSON.stringify(e.exdates),
+        organizer: e.organizer ? JSON.stringify(e.organizer) : null,
+        attendees: JSON.stringify(e.attendees),
+        status: e.status,
+        onlineUrl: e.onlineUrl,
+        free: e.free ? 1 : 0,
+        myResponse: e.myResponse,
+        mine: e.mine ? 1 : 0,
+        updatedAt: e.updatedAt
+      })
+  }
+
+  linkEventMessage(messageId: string, eventId: string, method: string, sequence: number): void {
+    this.db
+      .prepare(
+        'INSERT OR REPLACE INTO event_message (message_id, event_id, method, sequence) VALUES (?, ?, ?, ?)'
+      )
+      .run(messageId, eventId, method, sequence)
+  }
+
+  /** The meetings a message carried, with which version and method. */
+  eventsForMessage(messageId: string): { event: StoredEvent; method: string; sequence: number }[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT e.*, em.method AS em_method, em.sequence AS em_sequence
+             FROM event_message em JOIN event e ON e.id = em.event_id
+            WHERE em.message_id = ? ORDER BY e.recurrence_id IS NOT NULL, e.start`
+        )
+        .all(messageId) as (Parameters<MailStore['toEvent']>[0] & { em_method: string; em_sequence: number })[]
+    ).map((r) => ({ event: this.toEvent(r), method: r.em_method, sequence: r.em_sequence }))
+  }
+
+  /** The most recent message that carried a meeting, for replying. */
+  messageForEvent(eventId: string): string | null {
+    return (
+      (
+        this.db
+          .prepare(
+            `SELECT em.message_id FROM event_message em JOIN message m ON m.id = em.message_id
+              WHERE em.event_id = ? ORDER BY em.sequence DESC, m.date DESC LIMIT 1`
+          )
+          .get(eventId) as { message_id: string } | undefined
+      )?.message_id ?? null
+    )
+  }
+
+  /** Everything that could fall in a window: single meetings inside it, and every repeating series. */
+  eventsInRange(from: number, to: number): StoredEvent[] {
+    return (
+      this.db
+        .prepare(
+          `SELECT * FROM event
+            WHERE status != 'CANCELLED' AND (my_response IS NULL OR my_response != 'declined')
+              AND ((rrule IS NULL AND end > ? AND start < ?) OR (rrule IS NOT NULL AND start < ?))`
+        )
+        .all(from, to, to) as Parameters<MailStore['toEvent']>[0][]
+    ).map((r) => this.toEvent(r))
+  }
+
+  deleteEvent(id: string): void {
+    this.db.prepare('DELETE FROM event WHERE id = ?').run(id)
+  }
+
+  messageHasInvite(id: string): boolean {
+    return !!this.db.prepare('SELECT 1 FROM event_message WHERE message_id = ?').get(id)
+  }
+
+  // ---- templates ------------------------------------------------------------------
+
+  listTemplates(): Template[] {
+    return (
+      this.db.prepare('SELECT * FROM template ORDER BY name COLLATE NOCASE').all() as {
+        id: string
+        name: string
+        subject: string
+        html: string
+        attachments: string
+        updated_at: number
+      }[]
+    ).map((r) => ({
+      id: r.id,
+      name: r.name,
+      subject: r.subject,
+      html: r.html,
+      attachments: JSON.parse(r.attachments) as Template['attachments'],
+      updatedAt: r.updated_at
+    }))
+  }
+
+  putTemplate(t: Template): void {
+    this.db
+      .prepare(
+        `INSERT INTO template (id, name, subject, html, attachments, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET name = excluded.name, subject = excluded.subject,
+           html = excluded.html, attachments = excluded.attachments, updated_at = excluded.updated_at`
+      )
+      .run(t.id, t.name, t.subject, t.html, JSON.stringify(t.attachments), t.updatedAt)
+  }
+
+  deleteTemplate(id: string): void {
+    this.db.prepare('DELETE FROM template WHERE id = ?').run(id)
   }
 
   // ---- compose: signatures, drafts, outbox, contacts ---------------------------
@@ -549,13 +1349,14 @@ export class MailStore {
     sendAt: number
     subject: string
     to: string[]
+    createdAt?: number
   }): void {
     this.db
       .prepare(
         `INSERT INTO outbox (id, account_id, payload, send_at, state, subject, to_text, created_at)
          VALUES (?, ?, ?, ?, 'queued', ?, ?, ?)`
       )
-      .run(o.id, o.accountId, o.payload, o.sendAt, o.subject, JSON.stringify(o.to), Date.now())
+      .run(o.id, o.accountId, o.payload, o.sendAt, o.subject, JSON.stringify(o.to), o.createdAt ?? Date.now())
   }
 
   getOutbox(id: string):
@@ -568,6 +1369,7 @@ export class MailStore {
         error: string | null
         subject: string
         to: string[]
+        createdAt: number
       }
     | undefined {
     const r = this.db.prepare('SELECT * FROM outbox WHERE id = ?').get(id) as
@@ -580,10 +1382,12 @@ export class MailStore {
           error: string | null
           subject: string
           to_text: string
+          created_at: number
         }
       | undefined
     return (
       r && {
+        createdAt: r.created_at,
         id: r.id,
         accountId: r.account_id,
         payload: r.payload,

@@ -1,5 +1,80 @@
 import { z } from 'zod'
 
+// ---- Smart categories -----------------------------------------------------------
+
+export const categorySchema = z.enum([
+  'sponsorship',
+  'collab',
+  'platform',
+  'fan',
+  'invoice',
+  'cold',
+  'other'
+])
+export type Category = z.infer<typeof categorySchema>
+
+export const CATEGORY_LABELS: Record<Category, string> = {
+  sponsorship: 'Sponsorship',
+  collab: 'Collab',
+  platform: 'Platform',
+  fan: 'Fan mail',
+  invoice: 'Invoice',
+  cold: 'Cold outreach',
+  other: 'Other'
+}
+
+export const riskLevelSchema = z.enum(['none', 'caution', 'danger'])
+export const riskSchema = z.object({
+  level: riskLevelSchema,
+  reasons: z.array(z.object({ code: z.string(), level: z.enum(['caution', 'danger']), text: z.string() }))
+})
+
+export const calendarResponseSchema = z.enum(['accepted', 'tentative', 'declined'])
+export type CalendarResponse = z.infer<typeof calendarResponseSchema>
+
+export const calendarPersonSchema = z.object({ name: z.string(), email: z.string() })
+
+export const calendarEventSchema = z.object({
+  id: z.string(),
+  accountId: z.string(),
+  uid: z.string(),
+  sequence: z.number().int(),
+  recurrenceId: z.number().nullable(),
+  summary: z.string(),
+  description: z.string(),
+  location: z.string(),
+  start: z.number(),
+  end: z.number(),
+  allDay: z.boolean(),
+  rrule: z.string().nullable(),
+  /** The repeat rule in words, e.g. "Every week on Monday". */
+  repeats: z.string().nullable(),
+  organizer: calendarPersonSchema.nullable(),
+  attendees: z.array(
+    calendarPersonSchema.extend({ partstat: z.string(), role: z.string(), rsvp: z.boolean() })
+  ),
+  status: z.enum(['CONFIRMED', 'TENTATIVE', 'CANCELLED']),
+  onlineUrl: z.string().nullable(),
+  /** Your answer, or null if you have not replied. */
+  myResponse: calendarResponseSchema.nullable(),
+  /** You are the organizer (you sent the invitation). */
+  mine: z.boolean(),
+  messageId: z.string().nullable()
+})
+export type CalendarEvent = z.infer<typeof calendarEventSchema>
+
+/** An invitation as shown on the message that carried it. */
+export const inviteSchema = z.object({
+  event: calendarEventSchema,
+  /** REQUEST, CANCEL or PUBLISH. */
+  method: z.string(),
+  /** Other accepted or tentative meetings that overlap this one. */
+  conflicts: z.array(z.object({ summary: z.string(), start: z.number(), end: z.number() })),
+  /** A newer version of this meeting has arrived; this message is out of date. */
+  outdated: z.boolean()
+})
+export type Invite = z.infer<typeof inviteSchema>
+
 export const providerSchema = z.enum(['gmail', 'microsoft', 'imap'])
 export type Provider = z.infer<typeof providerSchema>
 
@@ -76,7 +151,15 @@ export const messageSummarySchema = z.object({
   unread: z.boolean(),
   starred: z.boolean(),
   /** Messages in this conversation (1 = standalone). */
-  threadSize: z.number().int()
+  threadSize: z.number().int(),
+  category: categorySchema,
+  risk: riskLevelSchema,
+  /** When a snoozed message comes back; null for everything else. */
+  snoozedUntil: z.number().nullable(),
+  /** When you asked to be reminded if nobody replies; null if no reminder is set. */
+  followUpAt: z.number().nullable(),
+  /** The message carries a meeting invitation. */
+  invite: z.boolean()
 })
 export type MessageSummary = z.infer<typeof messageSummarySchema>
 
@@ -89,6 +172,14 @@ export const attachmentSchema = z.object({
   inline: z.boolean()
 })
 export type Attachment = z.infer<typeof attachmentSchema>
+
+/** What an attachment looks like without opening another program. */
+export const attachmentPreviewSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('image'), dataUrl: z.string() }),
+  z.object({ kind: z.literal('text'), text: z.string(), truncated: z.boolean() }),
+  z.object({ kind: z.literal('none') })
+])
+export type AttachmentPreview = z.infer<typeof attachmentPreviewSchema>
 
 export const messageDetailSchema = z.object({
   id: z.string(),
@@ -112,7 +203,18 @@ export const messageDetailSchema = z.object({
   blockedImages: z.number().int(),
   /** The sender is on the user's "always load images" list. */
   imagesAllowed: z.boolean(),
-  attachments: z.array(attachmentSchema)
+  attachments: z.array(attachmentSchema),
+  category: categorySchema,
+  /** True when you chose the category yourself rather than the rules. */
+  categoryManual: z.boolean(),
+  /** Scam-shield verdict; 'none' once you have marked the message safe. */
+  risk: riskSchema,
+  riskSafe: z.boolean(),
+  snoozedUntil: z.number().nullable(),
+  followUpAt: z.number().nullable(),
+  /** Your own labels on this message (local to this app, not synced to the mail server). */
+  labelIds: z.array(z.string()),
+  invite: inviteSchema.nullable()
 })
 export type MessageDetail = z.infer<typeof messageDetailSchema>
 
@@ -129,7 +231,12 @@ export const messageQuerySchema = z.object({
   accountId: z.string().optional(),
   folderId: z.string().optional(),
   limit: z.number().int().min(1).max(500).default(100),
-  offset: z.number().int().min(0).default(0)
+  offset: z.number().int().min(0).default(0),
+  /** A smart view: everything you owe a reply, or sent mail still waiting on one. */
+  view: z.enum(['needsReply', 'waiting', 'suspicious', 'snoozed', 'followUp']).optional(),
+  category: categorySchema.optional(),
+  /** Only messages carrying this label, in any folder. */
+  labelId: z.string().optional()
 })
 
 // ---- Compose ---------------------------------------------------------------
@@ -157,7 +264,13 @@ export const draftSchema = z.object({
   /** Message-ID of the message being replied to, with angle brackets. */
   inReplyTo: z.string().optional(),
   references: z.array(z.string()).max(100).optional(),
-  attachments: z.array(draftAttachmentSchema).max(50)
+  attachments: z.array(draftAttachmentSchema).max(50),
+  /** Remind me if nobody replies within this many days of it being sent. */
+  followUpDays: z.number().int().min(1).max(60).optional(),
+  /** A meeting invitation or reply to send as a text/calendar part (iMIP). */
+  ical: z
+    .object({ method: z.enum(['REQUEST', 'REPLY', 'CANCEL']), content: z.string().max(200_000) })
+    .optional()
 })
 export type Draft = z.infer<typeof draftSchema>
 
@@ -193,7 +306,10 @@ export const outboxItemSchema = z.object({
   state: z.enum(['queued', 'sending', 'sent', 'failed']),
   error: z.string().nullable(),
   /** Epoch ms when a queued message actually goes out; until then it can be undone. */
-  sendAt: z.number()
+  sendAt: z.number(),
+  createdAt: z.number(),
+  /** Queued for a time you chose, rather than just riding out the undo window. */
+  scheduled: z.boolean()
 })
 export type OutboxItem = z.infer<typeof outboxItemSchema>
 
@@ -219,3 +335,148 @@ export const streamSafeStateSchema = z.object({
   watch: z.array(z.string())
 })
 export type StreamSafeState = z.infer<typeof streamSafeStateSchema>
+
+// ---- Mail actions --------------------------------------------------------------
+
+export const messageActionSchema = z.enum(['archive', 'trash', 'junk', 'move', 'deleteForever'])
+export type MessageAction = z.infer<typeof messageActionSchema>
+
+/** What it takes to put a moved message back: the server gives it a new id in its new folder, so it is found by Message-ID. */
+export const undoMoveSchema = z.object({
+  accountId: z.string(),
+  messageId: z.string(),
+  /** Where the message is now, and where it came from (IMAP paths). */
+  from: z.string(),
+  to: z.string(),
+  /** Shown in the toast, e.g. "Archived". */
+  label: z.string()
+})
+export type UndoMove = z.infer<typeof undoMoveSchema>
+
+export const labelSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  /** Messages carrying it. */
+  count: z.number().int()
+})
+export type Label = z.infer<typeof labelSchema>
+
+export const viewCountsSchema = z.object({
+  needsReply: z.number().int(),
+  waiting: z.number().int(),
+  suspicious: z.number().int(),
+  snoozed: z.number().int(),
+  followUp: z.number().int(),
+  categories: z.array(z.object({ category: categorySchema, unread: z.number().int(), total: z.number().int() }))
+})
+export type ViewCounts = z.infer<typeof viewCountsSchema>
+
+// ---- Sponsorship deals -------------------------------------------------------------
+
+export const dealStageSchema = z.enum(['lead', 'negotiating', 'contracted', 'delivered', 'paid', 'passed'])
+export type DealStage = z.infer<typeof dealStageSchema>
+
+export const DEAL_STAGES: { id: DealStage; label: string }[] = [
+  { id: 'lead', label: 'Lead' },
+  { id: 'negotiating', label: 'Negotiating' },
+  { id: 'contracted', label: 'Contracted' },
+  { id: 'delivered', label: 'Delivered' },
+  { id: 'paid', label: 'Paid' },
+  { id: 'passed', label: 'Passed' }
+]
+
+export const dealSchema = z.object({
+  id: z.string(),
+  accountId: z.string(),
+  /** The message the deal was started from, if it is still in the cache. */
+  messageId: z.string().nullable(),
+  brand: z.string(),
+  stage: dealStageSchema,
+  rate: z.number().nullable(),
+  currency: z.string(),
+  deliverables: z.string(),
+  /** Epoch ms of the next deadline. */
+  dueDate: z.number().nullable(),
+  notes: z.string(),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+  paidAt: z.number().nullable()
+})
+export type Deal = z.infer<typeof dealSchema>
+
+export const dealPatchSchema = z.object({
+  brand: z.string().trim().min(1).max(120).optional(),
+  stage: dealStageSchema.optional(),
+  rate: z.number().min(0).max(1e9).nullable().optional(),
+  currency: z.string().trim().toUpperCase().length(3).optional(),
+  deliverables: z.string().max(2000).optional(),
+  dueDate: z.number().nullable().optional(),
+  notes: z.string().max(5000).optional()
+})
+export type DealPatch = z.infer<typeof dealPatchSchema>
+
+// ---- Notifications -------------------------------------------------------------------
+
+const clock = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+
+export const notificationSettingsSchema = z.object({
+  enabled: z.boolean(),
+  /** Only these kinds of mail raise a notification. */
+  categories: z.array(categorySchema),
+  quietHours: z.object({ enabled: z.boolean(), start: clock, end: clock }),
+  /**
+   * While stream-safe mode is on: 'silent' shows nothing (notifications appear on screen and in
+   * captures), 'generic' shows "New message" with no sender or subject.
+   */
+  whenStreamSafe: z.enum(['silent', 'generic'])
+})
+export type NotificationSettings = z.infer<typeof notificationSettingsSchema>
+
+// ---- Templates ------------------------------------------------------------------------
+
+export const templateSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  /** May contain {{variables}}. Empty means "leave the subject alone". */
+  subject: z.string(),
+  /** HTML, may contain {{variables}}. */
+  html: z.string(),
+  /** Files kept with the template (a media kit, a rate card). */
+  attachments: z.array(draftAttachmentSchema),
+  updatedAt: z.number()
+})
+export type Template = z.infer<typeof templateSchema>
+
+export const templateInputSchema = z.object({
+  id: z.string().optional(),
+  name: z.string().trim().min(1).max(80),
+  subject: z.string().max(998),
+  html: z.string().max(200_000),
+  attachments: z.array(draftAttachmentSchema).max(10)
+})
+export type TemplateInput = z.infer<typeof templateInputSchema>
+
+export const meetingInputSchema = z.object({
+  accountId: z.string(),
+  summary: z.string().trim().min(1).max(200),
+  location: z.string().max(500).default(''),
+  description: z.string().max(5000).default(''),
+  start: z.number(),
+  end: z.number(),
+  allDay: z.boolean().default(false),
+  /** Addresses, optionally "Name <addr>". */
+  attendees: z.array(z.string().trim().min(3).max(320)).min(1).max(100),
+  onlineUrl: z.string().max(2000).nullable().default(null),
+  /** How a new meeting repeats. Left out on an edit, the series is unchanged. */
+  repeat: z.enum(['none', 'daily', 'weekly', 'biweekly', 'monthly']).optional(),
+  /** Occurrences in all, when it repeats. */
+  repeatCount: z.number().int().min(2).max(200).optional()
+})
+export type MeetingInput = z.input<typeof meetingInputSchema>
+
+export const calendarOccurrenceSchema = z.object({
+  event: calendarEventSchema,
+  start: z.number(),
+  end: z.number()
+})
+export type CalendarOccurrence = z.infer<typeof calendarOccurrenceSchema>

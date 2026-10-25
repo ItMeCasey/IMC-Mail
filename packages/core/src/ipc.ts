@@ -1,6 +1,17 @@
 import { z } from 'zod'
 import {
   accountSchema,
+  calendarEventSchema,
+  calendarOccurrenceSchema,
+  calendarResponseSchema,
+  meetingInputSchema,
+  categorySchema,
+  dealPatchSchema,
+  dealSchema,
+  attachmentPreviewSchema,
+  labelSchema,
+  undoMoveSchema,
+  viewCountsSchema,
   contactSchema,
   draftAttachmentSchema,
   draftSchema,
@@ -8,13 +19,17 @@ import {
   folderSchema,
   imapAccountInputSchema,
   messageQuerySchema,
+  messageActionSchema,
   messageDetailSchema,
   messageSummarySchema,
   oauthProviderIdSchema,
   outboxItemSchema,
   replyContextSchema,
   replyModeSchema,
+  notificationSettingsSchema,
   streamSafeModeSchema,
+  templateInputSchema,
+  templateSchema,
   streamSafeStateSchema,
   threadSchema
 } from './schemas'
@@ -82,6 +97,57 @@ export const ipcContract = {
     input: messageQuerySchema,
     output: z.array(messageSummarySchema)
   },
+  /** Hides a message until the given time (epoch ms), when it returns as unread. null brings it back now. */
+  'messages:snooze': {
+    input: z.object({ id: z.string(), until: z.number().int().nullable() }),
+    output: z.undefined()
+  },
+  /** Reminds you at the given time (epoch ms) if nobody has replied to a message you sent. null clears it. */
+  'messages:followUp': {
+    input: z.object({ id: z.string(), at: z.number().int().nullable() }),
+    output: z.undefined()
+  },
+  /** Tells the scam shield a message is fine (or undoes that). */
+  'messages:markSafe': {
+    input: z.object({ id: z.string(), safe: z.boolean() }),
+    output: z.undefined()
+  },
+  'messages:setCategory': {
+    input: z.object({ id: z.string(), category: categorySchema.nullable() }),
+    output: z.undefined()
+  },
+  /** Counts for the sidebar's smart views. */
+  'views:counts': {
+    input: z.undefined(),
+    output: viewCountsSchema
+  },
+  /** Asks where to save, then writes every deal as a CSV file for a spreadsheet or an accountant. */
+  'deals:exportCsv': {
+    input: z.undefined(),
+    output: z.object({ saved: z.string().nullable() })
+  },
+  'deals:list': {
+    input: z.undefined(),
+    output: z.array(dealSchema)
+  },
+  /** Starts a deal, prefilled from a message (brand from the sender, due date left empty). */
+  'deals:create': {
+    input: z.object({ messageId: z.string().optional(), accountId: z.string().optional(), patch: dealPatchSchema.optional() }),
+    output: dealSchema
+  },
+  'deals:update': {
+    input: z.object({ id: z.string(), patch: dealPatchSchema }),
+    output: dealSchema
+  },
+  'deals:delete': {
+    input: z.object({ id: z.string() }),
+    output: z.undefined()
+  },
+  /** Searches the local cache. See apps/desktop/src/main/search.ts for the query language. */
+  'messages:search': {
+    input: z.object({ q: z.string().max(300) }),
+    output: z.array(messageSummarySchema)
+  },
   /** The conversation containing this message; downloads the selected message's body if needed. */
   'messages:open': {
     input: z.object({ id: z.string() }),
@@ -98,6 +164,25 @@ export const ipcContract = {
       seen: z.boolean().optional(),
       flagged: z.boolean().optional()
     }),
+    output: z.undefined()
+  },
+  /**
+   * Moves a message out of its folder: archive, trash, junk, or into a chosen folder of the same
+   * account. deleteForever erases it from the server for good.
+   */
+  'messages:act': {
+    input: z.object({
+      id: z.string(),
+      action: messageActionSchema,
+      /** Required for action 'move': a folder of the message's own account. */
+      folderId: z.string().optional()
+    }),
+    /** How to undo it; null for deleting forever, which cannot be undone. */
+    output: z.object({ undo: undoMoveSchema.nullable() })
+  },
+  /** Puts a message moved by 'messages:act' back where it was. */
+  'messages:undoMove': {
+    input: undoMoveSchema,
     output: z.undefined()
   },
   /** Remember to always load remote images for this sender. */
@@ -121,7 +206,10 @@ export const ipcContract = {
   },
   /** Queues the message. It goes out after the undo window unless compose:undo is called. */
   'compose:send': {
-    input: draftSchema,
+    input: draftSchema.extend({
+      /** Epoch ms to send at; omit to send after the undo window. */
+      sendAt: z.number().int().optional()
+    }),
     output: z.object({ outboxId: z.string(), sendAt: z.number() })
   },
   /** Cancels a queued or failed send and returns the draft so it can be edited again. */
@@ -153,6 +241,61 @@ export const ipcContract = {
     input: z.undefined(),
     output: z.array(outboxItemSchema)
   },
+  /** Accept, tentatively accept, or decline the meeting invitation on a message. */
+  'calendar:respond': {
+    input: z.object({ messageId: z.string(), response: calendarResponseSchema, comment: z.string().max(1000).optional() }),
+    output: calendarEventSchema
+  },
+  /** Meetings in a time range, repeating ones expanded. Declined and cancelled meetings are left out. */
+  'calendar:list': {
+    input: z.object({ from: z.number(), to: z.number() }),
+    output: z.array(calendarOccurrenceSchema)
+  },
+  /** Creates a meeting and emails the invitation to the attendees. */
+  'calendar:schedule': {
+    input: meetingInputSchema,
+    output: calendarEventSchema
+  },
+  /** Changes a meeting you organize and emails the update. */
+  'calendar:update': {
+    input: z.object({ id: z.string(), patch: meetingInputSchema.partial().omit({ accountId: true }) }),
+    output: calendarEventSchema
+  },
+  /** Cancels a meeting you organize and emails the cancellation. */
+  'calendar:cancel': {
+    input: z.object({ id: z.string() }),
+    output: calendarEventSchema
+  },
+  /** Asks where to save, then writes the meeting as an .ics file Outlook and others can open. */
+  'calendar:exportIcs': {
+    input: z.object({ id: z.string() }),
+    output: z.object({ saved: z.string().nullable() })
+  },
+  'templates:list': {
+    input: z.undefined(),
+    output: z.array(templateSchema)
+  },
+  'templates:save': {
+    input: templateInputSchema,
+    output: templateSchema
+  },
+  'templates:delete': {
+    input: z.object({ id: z.string() }),
+    output: z.undefined()
+  },
+  'notifications:get': {
+    input: z.undefined(),
+    output: notificationSettingsSchema
+  },
+  'notifications:set': {
+    input: notificationSettingsSchema.partial(),
+    output: notificationSettingsSchema
+  },
+  /** Shows a sample notification so you can see what one looks like right now. */
+  'notifications:test': {
+    input: z.undefined(),
+    output: z.object({ shown: z.boolean(), reason: z.string().nullable() })
+  },
   'streamsafe:get': {
     input: z.undefined(),
     output: streamSafeStateSchema
@@ -171,6 +314,28 @@ export const ipcContract = {
     output: streamSafeStateSchema
   },
   /** Asks where to save, then writes the attachment. `saved` is the path, or null if cancelled. */
+  /** An image or text attachment shown in the app. Other kinds come back as { kind: 'none' }. */
+  'attachments:preview': {
+    input: z.object({ messageId: z.string(), attachmentId: z.string() }),
+    output: attachmentPreviewSchema
+  },
+  /** Downloads the next batch of older messages in a folder (headers only; bodies load when opened). */
+  'folders:loadOlder': {
+    input: z.object({ folderId: z.string() }),
+    output: z.object({ loaded: z.number().int(), more: z.boolean() })
+  },
+  /** Your labels, with how many messages carry each. Labels live on this computer only. */
+  'labels:list': { input: z.undefined(), output: z.array(labelSchema) },
+  'labels:create': {
+    input: z.object({ name: z.string().trim().min(1).max(40) }),
+    output: labelSchema
+  },
+  'labels:delete': { input: z.object({ id: z.string() }), output: z.undefined() },
+  /** Replaces the labels on a message. They follow it when it moves between folders. */
+  'messages:setLabels': {
+    input: z.object({ id: z.string(), labelIds: z.array(z.string()).max(50) }),
+    output: z.undefined()
+  },
   'attachments:save': {
     input: z.object({ messageId: z.string(), attachmentId: z.string() }),
     output: z.object({ saved: z.string().nullable() })
@@ -183,7 +348,9 @@ export const ipcEvents = {
   'sync:changed': z.object({ accountId: z.string() }),
   /** The outbox changed: a message was queued, sent, failed, or undone. */
   'outbox:changed': z.object({}),
-  'streamsafe:changed': streamSafeStateSchema
+  'streamsafe:changed': streamSafeStateSchema,
+  /** A notification was clicked: open this message. */
+  'notification:open': z.object({ messageId: z.string() })
 } as const
 
 export type IpcContract = typeof ipcContract

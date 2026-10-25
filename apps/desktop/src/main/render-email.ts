@@ -51,7 +51,10 @@ export function scrubCss(css: string, allowImages: boolean, onBlocked: () => voi
     })
 }
 
-export function sanitizeEmailHtml(raw: string, opts: { allowImages: boolean }): Rendered {
+export function sanitizeEmailHtml(
+  raw: string,
+  opts: { allowImages: boolean; /** Remove every link's destination (dangerous messages). */ defangLinks?: boolean }
+): Rendered {
   let blocked = 0
   const onBlocked = () => void blocked++
 
@@ -60,7 +63,7 @@ export function sanitizeEmailHtml(raw: string, opts: { allowImages: boolean }): 
     allowVulnerableTags: true, // <style> is needed for real-world email; the CSP and scrubCss contain it
     allowedAttributes: {
       '*': GLOBAL_ATTRS,
-      a: ['href', 'name', 'target', 'rel'],
+      a: ['href', 'name', 'target', 'rel', 'data-defanged'],
       img: ['src', 'alt', 'width', 'height', 'data-blocked']
     },
     allowedSchemes: ['http', 'https', 'mailto', 'tel'],
@@ -72,8 +75,14 @@ export function sanitizeEmailHtml(raw: string, opts: { allowImages: boolean }): 
         const a = { ...attribs }
         if (a['style']) a['style'] = scrubCss(a['style'], opts.allowImages, onBlocked)
         if (tagName === 'a') {
-          a['target'] = '_blank'
-          a['rel'] = 'noopener noreferrer'
+          if (opts.defangLinks) {
+            delete a['href']
+            a['data-defanged'] = '1'
+            a['title'] = 'Link disabled: this message looks like a scam'
+          } else {
+            a['target'] = '_blank'
+            a['rel'] = 'noopener noreferrer'
+          }
         }
         if (tagName === 'img') {
           const src = (a['src'] ?? '').trim()
@@ -109,10 +118,13 @@ const escapeHtml = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
 /** Plain text to HTML: escaped, with http(s) and mailto links made clickable. */
-export function textToHtml(text: string): string {
+export function textToHtml(text: string, opts: { defangLinks?: boolean } = {}): string {
   return escapeHtml(text).replace(
     /\b(https?:\/\/[^\s<>"')\]]+[^\s<>"')\].,;:!?])/g,
-    (u) => `<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`
+    (u) =>
+      opts.defangLinks
+        ? `<a data-defanged="1" title="Link disabled: this message looks like a scam">${u}</a>`
+        : `<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`
   )
 }
 
@@ -154,6 +166,6 @@ export function buildDocument(
     ? `html{background:${bg};color:${fg}}body{white-space:pre-wrap;font:13px/1.55 system-ui,'Segoe UI',sans-serif}a{color:inherit;text-decoration:underline}`
     : `html{background:#fff;color:#111}body{font:14px/1.5 system-ui,'Segoe UI',sans-serif}a{color:#1a47c7}`
 
-  const html = `<!doctype html><html><head><meta charset="utf-8"><base target="_blank"><style>*{box-sizing:border-box}html{overflow-x:auto;overflow-y:hidden}body{margin:0;padding:16px;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}pre{white-space:pre-wrap}img[data-blocked]{display:inline-block;min-width:24px;min-height:24px;outline:1px dashed #8a8a8a}${base}</style></head><body>${body.html}<script>${script}</script></body></html>`
+  const html = `<!doctype html><html><head><meta charset="utf-8"><base target="_blank"><style>*{box-sizing:border-box}html{overflow-x:auto;overflow-y:hidden}body{margin:0;padding:16px;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}pre{white-space:pre-wrap}a[data-defanged]{text-decoration:line-through;cursor:not-allowed}img[data-blocked]{display:inline-block;min-width:24px;min-height:24px;outline:1px dashed #8a8a8a}${base}</style></head><body>${body.html}<script>${script}</script></body></html>`
   return { html, csp }
 }

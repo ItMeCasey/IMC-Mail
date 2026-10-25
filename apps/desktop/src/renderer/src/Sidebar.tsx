@@ -1,5 +1,19 @@
 import {
   Archive,
+  BadgeDollarSign,
+  Bell,
+  CalendarClock,
+  AlarmClock,
+  BellRing,
+  Briefcase,
+  Tag,
+  CalendarDays,
+  Clock,
+  Heart,
+  MailWarning,
+  Radio,
+  Receipt,
+  Users,
   FileText,
   Folder as FolderIcon,
   Inbox,
@@ -7,6 +21,7 @@ import {
   type LucideIcon,
   PenLine,
   Plus,
+  Reply,
   RefreshCw,
   Send,
   ShieldAlert,
@@ -15,7 +30,16 @@ import {
   TriangleAlert,
   X
 } from 'lucide-react'
-import type { Account, Folder, FolderRole, StreamSafeState } from '@imc/core'
+import {
+  CATEGORY_LABELS,
+  type Account,
+  type Label,
+  type Category,
+  type Folder,
+  type FolderRole,
+  type StreamSafeState,
+  type ViewCounts
+} from '@imc/core'
 import { Private, priv } from './streamsafe'
 import StreamSafeControl from './StreamSafeControl'
 import type { Selection } from './hooks'
@@ -32,6 +56,16 @@ const ROLE_ICON: Record<FolderRole, LucideIcon> = {
   all: Layers,
   starred: Star
 }
+
+const CATEGORY_ICON: Partial<Record<Category, LucideIcon>> = {
+  sponsorship: BadgeDollarSign,
+  collab: Users,
+  platform: Radio,
+  invoice: Receipt,
+  fan: Heart,
+  cold: MailWarning
+}
+const CATEGORY_ORDER: Category[] = ['sponsorship', 'collab', 'platform', 'invoice', 'fan', 'cold']
 
 const iconProps = { size: 16, strokeWidth: 1.75, 'aria-hidden': true } as const
 
@@ -52,7 +86,17 @@ export default function Sidebar({
   onCompose,
   onDrafts,
   draftCount,
+  scheduledCount,
+  onScheduled,
   streamSafe,
+  counts,
+  labels,
+  dealCount,
+  boardActive,
+  onBoard,
+  calendarActive,
+  onCalendar,
+  onNotifications,
   onRemove,
   onResync
 }: {
@@ -64,13 +108,24 @@ export default function Sidebar({
   onCompose: () => void
   onDrafts: () => void
   draftCount: number
+  scheduledCount: number
+  onScheduled: () => void
   streamSafe: StreamSafeState
+  counts: ViewCounts | undefined
+  labels: Label[]
+  dealCount: number
+  boardActive: boolean
+  onBoard: () => void
+  calendarActive: boolean
+  onCalendar: () => void
+  onNotifications: () => void
   onRemove: (id: string) => void
   onResync: (id: string) => void
 }) {
   const unifiedUnread = folders.filter((f) => f.role === 'inbox').reduce((n, f) => n + f.unread, 0)
   const hide = streamSafe.active
-  const isUnified = !selection.accountId && !selection.folderId
+  const isUnified =
+    !boardActive && !calendarActive && !selection.accountId && !selection.folderId && !selection.view && !selection.category && !selection.labelId
 
   return (
     <nav
@@ -95,6 +150,102 @@ export default function Sidebar({
           <span className="flex-1">All inboxes</span>
           {unifiedUnread > 0 && <span className="num text-sm text-ink-2">{unifiedUnread}</span>}
         </button>
+
+        <div className="space-y-0.5" role="group" aria-label="Smart views">
+          <button
+            className={row(!boardActive && selection.view === 'needsReply')}
+            aria-current={!boardActive && selection.view === 'needsReply' ? 'page' : undefined}
+            onClick={() => onSelect({ view: 'needsReply' })}
+          >
+            <Reply {...iconProps} />
+            <span className="flex-1">Needs reply</span>
+            {(counts?.needsReply ?? 0) > 0 && <span className="num text-sm text-ink-2">{counts?.needsReply}</span>}
+          </button>
+          <button
+            className={row(!boardActive && selection.view === 'waiting')}
+            aria-current={!boardActive && selection.view === 'waiting' ? 'page' : undefined}
+            onClick={() => onSelect({ view: 'waiting' })}
+          >
+            <Clock {...iconProps} />
+            <span className="flex-1">Waiting on reply</span>
+            {(counts?.waiting ?? 0) > 0 && <span className="num text-sm text-ink-2">{counts?.waiting}</span>}
+          </button>
+          {(counts?.suspicious ?? 0) > 0 && (
+            <button
+              className={row(!boardActive && selection.view === 'suspicious')}
+              aria-current={!boardActive && selection.view === 'suspicious' ? 'page' : undefined}
+              onClick={() => onSelect({ view: 'suspicious' })}
+            >
+              <ShieldAlert {...iconProps} />
+              <span className="flex-1">Suspicious</span>
+              <span className="num text-sm text-alert">{counts?.suspicious}</span>
+            </button>
+          )}
+          {(counts?.snoozed ?? 0) > 0 && (
+            <button
+              className={row(!boardActive && selection.view === 'snoozed')}
+              aria-current={!boardActive && selection.view === 'snoozed' ? 'page' : undefined}
+              onClick={() => onSelect({ view: 'snoozed' })}
+            >
+              <AlarmClock {...iconProps} />
+              <span className="flex-1">Snoozed</span>
+              <span className="num text-sm text-ink-2">{counts?.snoozed}</span>
+            </button>
+          )}
+          {(counts?.followUp ?? 0) > 0 && (
+            <button
+              className={row(!boardActive && !calendarActive && selection.view === 'followUp')}
+              aria-current={!boardActive && !calendarActive && selection.view === 'followUp' ? 'page' : undefined}
+              onClick={() => onSelect({ view: 'followUp' })}
+            >
+              <BellRing {...iconProps} />
+              <span className="flex-1">Follow-ups</span>
+              <span className="num text-sm text-ink-2">{counts?.followUp}</span>
+            </button>
+          )}
+          <button className={row(calendarActive)} aria-current={calendarActive ? 'page' : undefined} onClick={onCalendar}>
+            <CalendarDays {...iconProps} />
+            <span className="flex-1">Calendar</span>
+          </button>
+          <button className={row(boardActive)} aria-current={boardActive ? 'page' : undefined} onClick={onBoard}>
+            <Briefcase {...iconProps} />
+            <span className="flex-1">Sponsorship board</span>
+            {dealCount > 0 && <span className="num text-sm text-ink-2">{dealCount}</span>}
+          </button>
+          {CATEGORY_ORDER.map((c) => {
+            const n = counts?.categories.find((x) => x.category === c)
+            if (!n || n.total === 0) return null
+            const Icon = CATEGORY_ICON[c]!
+            const active = !boardActive && selection.category === c
+            return (
+              <button
+                key={c}
+                className={row(active)}
+                aria-current={active ? 'page' : undefined}
+                onClick={() => onSelect({ category: c })}
+              >
+                <Icon {...iconProps} />
+                <span className="flex-1">{CATEGORY_LABELS[c]}</span>
+                {n.unread > 0 && <span className="num text-sm text-ink-2">{n.unread}</span>}
+              </button>
+            )
+          })}
+        </div>
+
+        {labels.length > 0 && (
+          <div className="space-y-0.5" role="group" aria-label="Labels">
+            {labels.map((l) => {
+              const active = !boardActive && !calendarActive && selection.labelId === l.id
+              return (
+                <button key={l.id} className={row(active)} aria-current={active ? 'page' : undefined} onClick={() => onSelect({ labelId: l.id })}>
+                  <Tag {...iconProps} />
+                  <span className="flex-1 truncate">{l.name}</span>
+                  <span className="num text-sm text-ink-2">{l.count}</span>
+                </button>
+              )
+            })}
+          </div>
+        )}
 
         {accounts.map((a) => (
           <section key={a.id} aria-label={priv(hide, a.email, 'Account')} className="space-y-0.5">
@@ -166,6 +317,13 @@ export default function Sidebar({
       </div>
 
       <div className="space-y-2 border-t border-line p-3">
+        {scheduledCount > 0 && (
+          <button className={row(false)} onClick={onScheduled}>
+            <CalendarClock {...iconProps} />
+            <span className="flex-1">Scheduled</span>
+            <span className="num text-sm text-ink-2">{scheduledCount}</span>
+          </button>
+        )}
         {draftCount > 0 && (
           <button className={row(false)} onClick={onDrafts}>
             <FileText {...iconProps} />
@@ -174,6 +332,10 @@ export default function Sidebar({
           </button>
         )}
         <StreamSafeControl state={streamSafe} />
+        <button className={row(false)} onClick={onNotifications}>
+          <Bell {...iconProps} />
+          <span className="flex-1">Notifications</span>
+        </button>
         <ThemeSwitch />
         <button
           onClick={onAdd}

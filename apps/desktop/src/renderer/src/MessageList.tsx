@@ -1,4 +1,9 @@
 import { Plus, Star } from 'lucide-react'
+import CategoryTag from './CategoryTag'
+import RiskTag from './RiskTag'
+import { CalendarDays } from 'lucide-react'
+import { describeTime } from './schedule'
+import SearchBox from './SearchBox'
 import type { Account, MessageSummary } from '@imc/core'
 import { Private, priv } from './streamsafe'
 import { tapeColor } from './tape'
@@ -16,12 +21,20 @@ const th =
   'h-8 border-r border-line px-3 text-left text-sm font-medium text-ink-3 last:border-r-0'
 const td = 'overflow-hidden text-ellipsis whitespace-nowrap px-3'
 
-function Empty({ hasAccounts, onAdd }: { hasAccounts: boolean; onAdd: () => void }) {
+function Empty({
+  hasAccounts,
+  searching,
+  onAdd
+}: {
+  hasAccounts: boolean
+  searching: boolean
+  onAdd: () => void
+}) {
   return (
     <div className="grid flex-1 place-items-center p-8">
       <div className="max-w-sm space-y-3">
         <h2 className="text-lg font-semibold">
-          {hasAccounts ? 'Nothing on this sheet' : 'No accounts yet'}
+          {searching ? 'No matches' : hasAccounts ? 'Nothing on this sheet' : 'No accounts yet'}
         </h2>
         <p className="leading-(--leading-prose) text-ink-2">
           {hasAccounts
@@ -55,6 +68,16 @@ function ThreadCount({ n }: { n: number }) {
   )
 }
 
+/** Marks mail that carries a meeting invitation. */
+function InviteTag() {
+  return (
+    <span className="flex shrink-0 items-center gap-1 rounded-sm border border-line-strong px-1.5 text-xs leading-4 text-ink-2" title="Meeting invitation">
+      <CalendarDays size={11} strokeWidth={1.75} aria-hidden />
+      Invite
+    </span>
+  )
+}
+
 function Marks({ m }: { m: MessageSummary }) {
   return (
     <span className="flex items-center justify-end gap-2">
@@ -78,6 +101,10 @@ export default function MessageList({
   accounts,
   loading,
   hide,
+  footer,
+  query,
+  onQuery,
+  searching,
   selectedId,
   forceCompact = false,
   onSelect,
@@ -89,6 +116,11 @@ export default function MessageList({
   loading: boolean
   /** Stream-safe mode: show bars instead of senders and subjects. */
   hide: boolean
+  /** Shown under the list (the "load older mail" button). */
+  footer?: React.ReactNode
+  query: string
+  onQuery: (q: string) => void
+  searching: boolean
   selectedId: string | null
   /** Keep the narrow two-line layout even with no message open (the composer is showing). */
   forceCompact?: boolean
@@ -126,12 +158,15 @@ export default function MessageList({
       <header className="flex h-12 shrink-0 items-center gap-3 border-b border-line px-4">
         <h1 className="truncate text-md font-semibold">{title}</h1>
         {!loading && messages.length > 0 && (
-          <span className="num text-sm text-ink-3">{messages.length} threads</span>
+          <span className="num text-sm text-ink-3">
+            {messages.length} {searching ? (messages.length === 1 ? 'result' : 'results') : 'threads'}
+          </span>
         )}
+        <SearchBox value={query} onChange={onQuery} />
       </header>
 
       {empty ? (
-        <Empty hasAccounts={accounts.length > 0} onAdd={onAdd} />
+        <Empty hasAccounts={accounts.length > 0} searching={searching} onAdd={onAdd} />
       ) : compact ? (
         <ul className="min-h-0 flex-1 overflow-y-auto" onKeyDown={onKeyDown}>
           {messages.map((m) => {
@@ -159,9 +194,12 @@ export default function MessageList({
                       >
                         <Private active={hide}>{m.fromName || m.fromAddr || '(unknown)'}</Private>
                       </span>
-                      <time className="num shrink-0 text-sm text-ink-3">{formatDate(m.date)}</time>
+                      <time className="num shrink-0 text-sm text-ink-3">{m.snoozedUntil != null ? `Back ${describeTime(m.snoozedUntil)}` : m.followUpAt != null ? `Follow up ${describeTime(m.followUpAt)}` : formatDate(m.date)}</time>
                     </span>
                     <span className="mt-0.5 flex items-center gap-2">
+                      <RiskTag level={m.risk} />
+                      {m.invite && <InviteTag />}
+                      <CategoryTag category={m.category} hide={hide} />
                       <span
                         className={`min-w-0 flex-1 truncate ${m.unread ? 'font-medium text-ink' : 'text-ink-2'}`}
                       >
@@ -182,6 +220,7 @@ export default function MessageList({
               <col className="w-14" />
               <col className="w-8" />
               <col className="w-56" />
+              <col className="w-44" />
               <col />
               <col className="w-24" />
               <col className="w-24" />
@@ -198,6 +237,9 @@ export default function MessageList({
                   From
                 </th>
                 <th className={th} scope="col">
+                  Type
+                </th>
+                <th className={th} scope="col">
                   Subject
                 </th>
                 <th className={`${th} text-right`} scope="col">
@@ -212,7 +254,7 @@ export default function MessageList({
               {loading
                 ? Array.from({ length: 10 }, (_, i) => (
                     <tr key={i} className="h-(--row-h) border-b border-line" aria-hidden>
-                      <td colSpan={6} className="px-3">
+                      <td colSpan={7} className="px-3">
                         <div
                           className="h-3 rounded-sm bg-hover"
                           style={{ width: `${55 + ((i * 17) % 40)}%` }}
@@ -242,11 +284,19 @@ export default function MessageList({
                       <td className={`${td} ${m.unread ? 'font-semibold text-ink' : 'text-ink-2'}`}>
                         <Private active={hide}>{m.fromName || m.fromAddr || '(unknown)'}</Private>
                       </td>
+                      <td className="px-3">
+                        <span className="flex items-center gap-1.5">
+                          <RiskTag level={m.risk} />
+                          {m.invite && <InviteTag />}
+                      {m.invite && <InviteTag />}
+                          <CategoryTag category={m.category} hide={hide} />
+                        </span>
+                      </td>
                       <td className={`${td} ${m.unread ? 'font-medium text-ink' : 'text-ink-2'}`}>
                         <Private active={hide}>{m.subject || '(no subject)'}</Private>
                       </td>
                       <td className={`${td} num text-right text-sm text-ink-3`}>
-                        {formatDate(m.date)}
+                        {m.snoozedUntil != null ? `Back ${describeTime(m.snoozedUntil)}` : m.followUpAt != null ? `Follow up ${describeTime(m.followUpAt)}` : formatDate(m.date)}
                       </td>
                       <td className="px-3">
                         <Marks m={m} />
@@ -257,6 +307,7 @@ export default function MessageList({
           </table>
         </div>
       )}
+      {footer}
     </section>
   )
 }

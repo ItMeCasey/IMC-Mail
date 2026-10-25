@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { TriangleAlert } from 'lucide-react'
 import type { Draft, OutboxItem } from '@imc/core'
 import { useOutbox } from './hooks'
+import { describeTime } from './schedule'
 import { Private } from './streamsafe'
 
 const btn =
@@ -10,6 +11,8 @@ const btn =
 
 /** Sent confirmations stay a few seconds; queued, sending, and failed items stay until resolved. */
 const SENT_VISIBLE_MS = 4000
+/** A scheduled message is confirmed briefly, then lives in the Scheduled list. */
+const SCHEDULED_VISIBLE_MS = 10_000
 
 function Row({ item, now, onUndo, hide }: { item: OutboxItem; now: number; onUndo: (id: string) => void; hide: boolean }) {
   const to = item.to[0] ? `${item.to[0]}${item.to.length > 1 ? ` +${item.to.length - 1}` : ''}` : ''
@@ -27,6 +30,18 @@ function Row({ item, now, onUndo, hide }: { item: OutboxItem; now: number; onUnd
         </span>
         <button className={btn} onClick={() => onUndo(item.id)}>
           Edit
+        </button>
+      </div>
+    )
+  }
+  if (item.state === 'queued' && item.scheduled) {
+    return (
+      <div role="status" className="flex items-center gap-3">
+        <span className="min-w-0 flex-1 truncate">
+          Scheduled for <span className="num">{describeTime(item.sendAt)}</span>
+        </span>
+        <button className={btn} onClick={() => onUndo(item.id)}>
+          Undo
         </button>
       </div>
     )
@@ -59,7 +74,11 @@ export default function OutboxToast({ onEdit, hide }: { onEdit: (draft: Draft) =
   const [now, setNow] = useState(Date.now())
 
   const items = (outbox.data ?? []).filter(
-    (i) => i.state !== 'sent' || now - i.sendAt < SENT_VISIBLE_MS
+    (i) =>
+      i.state === 'failed' ||
+      (i.scheduled
+        ? i.state === 'queued' && now - i.createdAt < SCHEDULED_VISIBLE_MS
+        : i.state !== 'sent' || now - i.sendAt < SENT_VISIBLE_MS)
   )
 
   // Tick for the countdown, and again to retire "Sent" confirmations.

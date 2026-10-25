@@ -1,9 +1,15 @@
 import { useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import type { Category } from '@imc/core'
 
 export interface Selection {
   accountId?: string
   folderId?: string
+  /** A smart view across all accounts. */
+  view?: 'needsReply' | 'waiting' | 'suspicious' | 'snoozed' | 'followUp'
+  category?: Category
+  /** Show messages with this label, in any folder. */
+  labelId?: string
 }
 
 export const useAccounts = () =>
@@ -49,3 +55,20 @@ export const useOutbox = () =>
 
 export const useDrafts = () =>
   useQuery({ queryKey: ['drafts'], queryFn: () => window.imc.invoke('compose:drafts') })
+
+export const useSearch = (q: string) =>
+  useQuery({
+    queryKey: ['search', q],
+    queryFn: () => window.imc.invoke('messages:search', { q }),
+    enabled: q.length > 0,
+    placeholderData: (prev) => prev
+  })
+
+export const useViewCounts = () =>
+  useQuery({ queryKey: ['views'], queryFn: () => window.imc.invoke('views:counts') })
+
+export const useDeals = () =>
+  useQuery({ queryKey: ['deals'], queryFn: () => window.imc.invoke('deals:list') })
+
+export const useLabels = () =>
+  useQuery({ queryKey: ['labels'], queryFn: () => window.imc.invoke('labels:list') })

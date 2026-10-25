@@ -21,6 +21,8 @@ import { isReplySubject } from './threading'
 import type { AccountRow, BodyRow, MailStore } from './store'
 
 export const UNDO_MS = 10_000
+/** The furthest ahead a message can be scheduled. */
+export const MAX_SCHEDULE_MS = 366 * 24 * 3600 * 1000
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
 
 /** The network side of sending; faked or pointed at a local server in tests. */
@@ -122,6 +124,8 @@ export class ComposeService {
       ensureBody: (messageId: string) => Promise<BodyRow>
       onChange: () => void
       onSent: (accountId: string) => void
+      /** A message sent with "remind me if nobody replies": its Message-ID and when to remind. */
+      onFollowUp?: (accountId: string, messageId: string, due: number) => void
       undoMs?: number
       now?: () => number
     }
@@ -240,7 +244,10 @@ export class ComposeService {
   // -- sending --
 
   /** Validates and queues a message; it goes out when the undo window closes. */
-  async send(draft: Draft): Promise<{ outboxId: string; sendAt: number }> {
+  async send(
+    draft: Draft,
+    opts: { sendAt?: number; /** Skip the undo window (replies to invitations). */ immediate?: boolean } = {}
+  ): Promise<{ outboxId: string; sendAt: number }> {
     const account = this.store.getAccount(draft.accountId)
     if (!account) throw new Error('Choose an account to send from')
 
@@ -270,17 +277,25 @@ export class ComposeService {
       const f = files[i]!
       const dest = join(dir, `${i}-${f.filename}`)
       await copyFile(f.path, dest)
-      kept.push({ id: draft.attachments[i]!.id, filename: f.filename, size: f.size, path: dest })
+      // The recipient should see the file's real name, not the unique name used on disk.
+      const shown = basename(draft.attachments[i]!.filename).replace(/[\u0000-\u001f]/g, '') || f.filename
+      kept.push({ id: draft.attachments[i]!.id, filename: shown, size: f.size, path: dest })
     }
 
-    const sendAt = this.now() + (this.deps.undoMs ?? UNDO_MS)
+    const undoUntil = this.now() + (opts.immediate ? 0 : (this.deps.undoMs ?? UNDO_MS))
+    if (opts.sendAt !== undefined && opts.sendAt - this.now() > MAX_SCHEDULE_MS) {
+      throw new Error('Messages can be scheduled up to a year ahead')
+    }
+    // A time in the past, or inside the undo window, just means "send as usual".
+    const sendAt = Math.max(undoUntil, opts.sendAt ?? 0)
     this.store.queueOutbox({
       id: outboxId,
       accountId: account.id,
-      payload: JSON.stringify({ ...draft, to, cc, bcc, attachments: kept }),
+      payload: JSON.stringify({ ...draft, attachments: kept }),
       sendAt,
       subject: draft.subject,
-      to
+      to,
+      createdAt: this.now()
     })
     if (draft.id) this.store.deleteDraft(draft.id)
     this.deps.onChange()
@@ -307,12 +322,14 @@ export class ComposeService {
         to: r.to,
         state: r.state,
         error: r.error,
-        sendAt: r.sendAt
+        sendAt: r.sendAt,
+        createdAt: r.createdAt,
+        scheduled: r.sendAt - r.createdAt > 3 * (this.deps.undoMs ?? UNDO_MS)
       }))
   }
 
   /** Builds the RFC 822 message for a queued draft. */
-  async build(draft: Draft, account: AccountRow): Promise<{ raw: Buffer; envelope: { from: string; to: string[] } }> {
+  async build(draft: Draft, account: AccountRow): Promise<{ raw: Buffer; messageId: string | null; envelope: { from: string; to: string[] } }> {
     const html = sanitizeEmailHtml(draft.html, { allowImages: false }).html
     const mail = new MailComposer({
       from: { name: account.displayName, address: account.email },
@@ -324,12 +341,25 @@ export class ComposeService {
       text: htmlToText(html),
       inReplyTo: draft.inReplyTo,
       references: draft.references?.join(' '),
-      attachments: draft.attachments.map((a) => ({ filename: a.filename, path: a.path }))
+      attachments: draft.attachments.map((a) => ({ filename: a.filename, path: a.path })),
+      // A meeting invitation, reply or cancellation travels as a text/calendar alternative with its
+      // METHOD, which is what Outlook and Exchange look for to show Accept / Decline buttons.
+      ...(draft.ical
+        ? {
+            icalEvent: { method: draft.ical.method, content: draft.ical.content },
+            headers: { 'Content-Class': 'urn:content-classes:calendarmessage' }
+          }
+        : {})
     })
-    const raw = await mail.compile().build()
+    const compiled = mail.compile()
+    const raw = await compiled.build()
     return {
       raw,
-      envelope: { from: account.email, to: [...draft.to, ...draft.cc, ...draft.bcc] }
+      messageId: compiled.messageId() || null,
+      envelope: {
+        from: account.email,
+        to: [...draft.to, ...draft.cc, ...draft.bcc].flatMap((r) => bareAddress(r) ?? [])
+      }
     }
   }
 
@@ -348,7 +378,7 @@ export class ComposeService {
       this.deps.onChange()
       try {
         const draft = draftSchema.parse(JSON.parse(row.payload))
-        const { raw, envelope } = await this.build(draft, account)
+        const { raw, messageId, envelope } = await this.build(draft, account)
         await this.mailer.send(account, raw, envelope)
         this.store.setOutboxState(id, 'sent')
         await rm(join(this.deps.outboxDir, id), { recursive: true, force: true })
@@ -359,6 +389,9 @@ export class ComposeService {
           await this.mailer.appendToSent(account, sentPath, raw).catch((e) => {
             console.error('[compose] could not copy to Sent:', e instanceof Error ? e.message : e)
           })
+        }
+        if (draft.followUpDays && messageId) {
+          this.deps.onFollowUp?.(account.id, messageId, this.now() + draft.followUpDays * 24 * 3600 * 1000)
         }
         this.deps.onSent(account.id)
       } catch (e) {

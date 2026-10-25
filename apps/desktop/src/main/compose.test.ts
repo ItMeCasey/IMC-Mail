@@ -219,6 +219,88 @@ describe('sending', () => {
   })
 })
 
+describe('what the recipient sees', () => {
+  it('keeps display names in the To header and the file name you attached', async () => {
+    const t = setup()
+    const file = join(t.dir, 'brief.txt')
+    writeFileSync(file, 'body')
+    const [att] = await t.svc.vetFiles([file])
+    await t.svc.send(draft(t.account.id, { to: ['Pat Lee <pat@y.example>'], attachments: [{ ...att!, filename: 'Media Kit.txt' }] }))
+    t.advance(UNDO_MS + 1)
+    await t.svc.tick()
+    const { mail, rcpt } = received[0]!
+    expect(mail.to).toBeDefined()
+    expect(JSON.stringify(mail.to)).toContain('Pat Lee')
+    expect(rcpt).toContain('pat@y.example') // the envelope still gets the bare address
+    expect(mail.attachments[0]?.filename).toBe('Media Kit.txt')
+  })
+
+  it('hands the draft back with the names as typed', async () => {
+    const t = setup()
+    const { outboxId } = await t.svc.send(draft(t.account.id, { to: ['Pat Lee <pat@y.example>'] }))
+    expect(t.svc.undo(outboxId)?.to).toEqual(['Pat Lee <pat@y.example>'])
+  })
+})
+
+describe('scheduled send', () => {
+  const HOUR = 3600e3
+
+  it('waits for the chosen time, shows as scheduled, and sends once it arrives', async () => {
+    const t = setup()
+    const at = 1_000_000 + 20 * HOUR
+    const { sendAt } = await t.svc.send(draft(t.account.id), { sendAt: at })
+    expect(sendAt).toBe(at)
+    expect(t.svc.list()[0]).toMatchObject({ state: 'queued', scheduled: true, sendAt: at })
+
+    t.advance(UNDO_MS * 3) // far past the undo window, still not time
+    await t.svc.tick()
+    expect(received).toHaveLength(0)
+
+    t.advance(20 * HOUR)
+    await t.svc.tick()
+    expect(received).toHaveLength(1)
+    expect(received[0]?.mail.subject).toBe('Hello')
+    expect(t.svc.list()).toEqual([]) // sent rows are tidied away a minute later
+  })
+
+  it('can be cancelled back into a draft before it goes out', async () => {
+    const t = setup()
+    const { outboxId } = await t.svc.send(draft(t.account.id, { subject: 'Later' }), { sendAt: 1_000_000 + 5 * HOUR })
+    expect(t.svc.undo(outboxId)?.subject).toBe('Later')
+    t.advance(6 * HOUR)
+    await t.svc.tick()
+    expect(received).toHaveLength(0)
+  })
+
+  it('a time in the past or inside the undo window behaves like a normal send', async () => {
+    const t = setup()
+    const past = await t.svc.send(draft(t.account.id), { sendAt: 5 })
+    expect(past.sendAt).toBe(1_000_000 + UNDO_MS)
+    expect(t.svc.list()[0]?.scheduled).toBe(false)
+    const soon = await t.svc.send(draft(t.account.id), { sendAt: 1_000_000 + 2000 })
+    expect(soon.sendAt).toBe(1_000_000 + UNDO_MS)
+  })
+
+  it('refuses a date more than a year away', async () => {
+    const t = setup()
+    await expect(t.svc.send(draft(t.account.id), { sendAt: 1_000_000 + 400 * 24 * HOUR })).rejects.toThrow(/year/)
+  })
+
+  it('a scheduled message survives a restart and goes out when the app is next opened', async () => {
+    const t = setup()
+    await t.svc.send(draft(t.account.id), { sendAt: 1_000_000 + 3 * HOUR })
+    const later = new ComposeService(t.store, new SmtpMailer({ get: async () => ({ pass: 'pw' }) }), {
+      outboxDir: t.dir,
+      ensureBody: async () => ({ html: null, text: '', to: '', cc: '', attachments: [], truncated: false }),
+      onChange: () => {},
+      onSent: () => {},
+      now: () => 1_000_000 + 9 * HOUR // opened hours after it was due
+    })
+    await later.tick()
+    expect(received).toHaveLength(1)
+  })
+})
+
 describe('validation', () => {
   it('requires a recipient and valid addresses', async () => {
     const t = setup()
@@ -344,5 +426,49 @@ describe('helpers', () => {
 
   it('htmlToText keeps paragraphs and decodes entities', () => {
     expect(htmlToText('<p>Tom &amp; Jerry</p><p>Line<br>two &lt;3</p>')).toBe('Tom & Jerry\n\nLine\ntwo <3')
+  })
+})
+
+describe('remind me if nobody replies', () => {
+  it('reports the sent message by its real Message-ID, and the reminder lands once the Sent copy syncs', async () => {
+    const calls: [string, string, number][] = []
+    const t = setup()
+    let clock = 1_000_000
+    const svc = new ComposeService(t.store, new SmtpMailer({ get: async () => ({ pass: 'pw' }) }, t.append), {
+      outboxDir: t.dir,
+      ensureBody: async () => ({ html: null, text: '', to: '', cc: '', attachments: [], truncated: false }),
+      onChange: () => {},
+      onSent: () => {},
+      onFollowUp: (a, m, due) => {
+        calls.push([a, m, due])
+        t.store.addPendingFollowUp(a, m, due, 1_000_000)
+      },
+      now: () => clock
+    })
+    await svc.send(draft(t.account.id, { followUpDays: 3 }))
+    clock += UNDO_MS + 5
+    await svc.tick()
+    const header = received[received.length - 1]!.mail.messageId!
+    expect(calls).toEqual([[t.account.id, header, 1_000_000 + UNDO_MS + 5 + 3 * 24 * 3600 * 1000]])
+
+    // Not in Sent yet: nothing to remind about.
+    expect(t.store.followUpTick(calls[0]![2] + 1)).toEqual([])
+    // The server's copy arrives with the same Message-ID.
+    t.store.applyFetched(t.account.id, t.sent, [msg(5, { messageId: header, fromAddr: 'me@x.example', to: 'pat@y.example', subject: 'Hello' })], null)
+    expect(t.store.followUpTick(calls[0]![2] + 1)).toEqual([`${t.sent}:5`])
+  })
+
+  it('sets no reminder unless one was asked for', async () => {
+    const t = setup()
+    const onFollowUp = vi.fn()
+    let clock = 1_000_000
+    const svc = new ComposeService(t.store, new SmtpMailer({ get: async () => ({ pass: 'pw' }) }, t.append), {
+      outboxDir: t.dir, ensureBody: async () => ({ html: null, text: '', to: '', cc: '', attachments: [], truncated: false }),
+      onChange: () => {}, onSent: () => {}, onFollowUp, now: () => clock
+    })
+    await svc.send(draft(t.account.id))
+    clock += UNDO_MS + 5
+    await svc.tick()
+    expect(onFollowUp).not.toHaveBeenCalled()
   })
 })

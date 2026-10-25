@@ -12,10 +12,13 @@ const cssVar = (name: string): string =>
 export default function EmailFrame({
   id,
   allowImages,
+  allowLinks,
   title
 }: {
   id: string
   allowImages: boolean
+  /** Links in dangerous messages are inert until this is set. */
+  allowLinks: boolean
   title: string
 }) {
   const theme = useTheme()
@@ -27,11 +30,12 @@ export default function EmailFrame({
     void theme // recompute the colors when the theme changes
     const q = new URLSearchParams({
       images: allowImages ? '1' : '0',
+      links: allowLinks ? '1' : '0',
       fg: cssVar('--ink'),
       bg: cssVar('--sheet')
     })
     return `imc-body://m/${encodeURIComponent(id)}?${q}`
-  }, [id, allowImages, theme])
+  }, [id, allowImages, allowLinks, theme])
 
   useEffect(() => {
     const onMessage = (e: MessageEvent) => {

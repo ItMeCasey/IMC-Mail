@@ -126,7 +126,8 @@ export class AccountSync {
     private account: AccountRow,
     private store: MailStore,
     private credentials: Credentials,
-    private onChange: (accountId: string) => void
+    private onChange: (accountId: string) => void,
+    private onNewMail: (ids: string[]) => void = () => {}
   ) {}
 
   start(): void {
@@ -233,6 +234,44 @@ export class AccountSync {
     }
   }
 
+  /** Moves one message to another folder (IMAP MOVE, or copy and delete where unsupported). */
+  async moveMessage(path: string, uid: number, dest: string): Promise<void> {
+    const client = this.client
+    if (!client?.usable) throw new Error('Offline: reconnect to move this message')
+    const lock = await client.getMailboxLock(path)
+    try {
+      await client.messageMove(String(uid), dest, { uid: true })
+    } finally {
+      lock.release()
+    }
+  }
+
+  /** Finds a message by its Message-ID header in one folder and moves it to another (used to undo a move). */
+  async moveByMessageId(path: string, rfcMessageId: string, dest: string): Promise<void> {
+    const client = this.client
+    if (!client?.usable) throw new Error('Offline: reconnect to undo this')
+    const lock = await client.getMailboxLock(path)
+    try {
+      const uids = await client.search({ header: { 'message-id': rfcMessageId } }, { uid: true })
+      if (!uids || uids.length === 0) throw new Error('The message is not in that folder any more')
+      await client.messageMove(uids, dest, { uid: true })
+    } finally {
+      lock.release()
+    }
+  }
+
+  /** Permanently removes one message from the server. */
+  async deleteMessage(path: string, uid: number): Promise<void> {
+    const client = this.client
+    if (!client?.usable) throw new Error('Offline: reconnect to delete this message')
+    const lock = await client.getMailboxLock(path)
+    try {
+      await client.messageDelete(String(uid), { uid: true })
+    } finally {
+      lock.release()
+    }
+  }
+
   /** Files a copy of a sent message into a folder, marked as read. */
   async append(path: string, raw: Buffer): Promise<void> {
     const client = this.client
@@ -325,6 +364,32 @@ export class AccountSync {
     }
   }
 
+  /** Fetches the `count` messages just older than the oldest one cached. Returns how many, and whether older ones remain. */
+  async loadOlder(folder: FolderRef, count = WINDOW): Promise<{ loaded: number; more: boolean }> {
+    const client = this.client
+    if (!client?.usable) throw new Error('Offline: reconnect to load older mail')
+    const lock = await client.getMailboxLock(folder.path)
+    try {
+      const oldest = this.store.oldestUid(folder.id)
+      if (oldest === null) return { loaded: 0, more: false }
+      const uids = (await client.search({ uid: `1:${oldest - 1}` }, { uid: true })) || []
+      if (uids.length === 0) return { loaded: 0, more: false }
+      const batch = uids.slice(-count)
+      const fetched: FetchedMessage[] = []
+      const query = { uid: true, flags: true, envelope: true, internalDate: true, headers: ['references', 'in-reply-to'] }
+      for await (const m of client.fetch(`${batch[0]}:${batch[batch.length - 1]}`, query, { uid: true })) {
+        fetched.push(toFetched(m))
+      }
+      // No deletion pass: older mail is only ever added here.
+      this.store.applyFetched(this.account.id, folder.id, fetched, null)
+      this.store.rethread(this.account.id)
+      this.onChange(this.account.id)
+      return { loaded: fetched.length, more: uids.length > batch.length }
+    } finally {
+      lock.release()
+    }
+  }
+
   private async syncFolder(client: ImapFlow, folder: FolderRef): Promise<void> {
     const lock = await client.getMailboxLock(folder.path)
     try {
@@ -345,6 +410,8 @@ export class AccountSync {
         headers: ['references', 'in-reply-to']
       }
       let deleteFrom: number | null = null
+      // The very first pass over a folder is catch-up, not news.
+      const hadMail = this.store.windowStartUid(folder.id, 1) !== null
 
       if (mb.exists === 0) {
         this.store.applyFetched(this.account.id, folder.id, [], 0)
@@ -359,7 +426,8 @@ export class AccountSync {
             fetched.push(toFetched(m))
           }
         }
-        this.store.applyFetched(this.account.id, folder.id, fetched, deleteFrom)
+        const fresh = this.store.applyFetched(this.account.id, folder.id, fetched, deleteFrom)
+        if (hadMail && fresh.length > 0) this.onNewMail(fresh)
       }
       this.store.rethread(this.account.id)
     } finally {

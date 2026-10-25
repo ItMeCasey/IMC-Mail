@@ -1,5 +1,5 @@
 import { simpleParser, type AddressObject } from 'mailparser'
-import type { Attachment } from '@imc/core'
+import { extractLinks, parseICS, type Attachment, type CalEvent } from '@imc/core'
 
 export interface ParsedBody {
   html: string | null
@@ -7,6 +7,12 @@ export interface ParsedBody {
   to: string
   cc: string
   attachments: Attachment[]
+  replyTo: string
+  /** Raw Authentication-Results header, for the scam shield. */
+  authResults: string
+  links: { href: string; text: string }[]
+  /** Meeting invitations and replies found in text/calendar parts or .ics attachments. */
+  events: CalEvent[]
 }
 
 /** Inline images larger than this stay as attachments instead of being embedded in the HTML. */
@@ -24,7 +30,11 @@ export async function parseSource(source: Buffer): Promise<ParsedBody> {
   let html = typeof mail.html === 'string' ? mail.html : null
 
   const attachments: Attachment[] = []
+  const events: CalEvent[] = []
   mail.attachments.forEach((att, i) => {
+    const isCalendar =
+      /^(text\/calendar|application\/ics)/i.test(att.contentType) || /\.ics$/i.test(att.filename ?? '')
+    if (isCalendar && att.content.length < 500_000) events.push(...parseICS(att.content.toString('utf8')))
     const inlineImage =
       att.cid && att.contentType.startsWith('image/') && att.size <= MAX_INLINE_BYTES
     if (html && inlineImage) {
@@ -37,16 +47,23 @@ export async function parseSource(source: Buffer): Promise<ParsedBody> {
       filename: att.filename || `attachment-${i + 1}`,
       mime: att.contentType || 'application/octet-stream',
       size: att.size,
-      inline: Boolean(inlineImage && html)
+      // The calendar part is shown as an invitation card, not as a file.
+      inline: Boolean((inlineImage && html) || (isCalendar && events.length > 0))
     })
   })
 
+  const auth = mail.headers.get('authentication-results')
   return {
     html,
     text: mail.text ?? '',
     to: addresses(mail.to),
     cc: addresses(mail.cc),
-    attachments
+    attachments,
+    replyTo: mail.replyTo?.text ?? '',
+    authResults: Array.isArray(auth) ? auth.join(' ') : typeof auth === 'string' ? auth : '',
+    // Links are read from the raw HTML (before inline images are rewritten) for the scam shield.
+    links: typeof mail.html === 'string' ? extractLinks(mail.html) : [],
+    events
   }
 }
 

@@ -185,6 +185,30 @@ Message HTML always renders on white inside a bordered, sandboxed frame, because
 ### Composer
 Takes the reading pane's slot, so the list stays visible beside it. Header fields are hairline-ruled rows with a fixed 40px label column: From (tape square plus account select), To / Cc / Bcc as recipient chips, Subject. Invalid recipients get an alert border and a title. A single icon toolbar sits above a plain editing surface with no inner box. Send is the one primary button; Ctrl+Enter sends. A bordered raised bar at the bottom center shows the undo countdown, then "Sent", or the error with an Edit action.
 
+### Category tag and smart views
+A category shows as a small outlined text label (`border-line-strong`, 11px), never as a color; plain mail gets no tag. The sidebar groups Needs reply, Waiting on reply, the Sponsorship board and one row per non-empty category under All inboxes, each with a line icon and a tabular count. The open view takes the `--selected` tint.
+
+### Composer menus
+The template menu (toolbar icon) and the schedule menu (arrow attached to the right edge of Send) are bordered `--raised` popovers with 32px rows, closing on outside click or Escape. The Send button and its arrow are one accent-filled control separated by a hairline in `--on-accent` at 40%. Placeholders such as {{rate}} stay as visible text until filled; a status line names what is left.
+
+### Settings dialogs
+Small modal `<dialog>` forms (28rem, `--raised`, `--line-strong` border, no shadow): a heading, grouped fieldsets with a muted legend, native checkboxes and radios in the accent, time inputs styled like text fields, one primary Done button. Changes save immediately, so there is no Cancel.
+
+### Scam warnings
+In lists, `Likely scam` (alert border and text, shield icon) and `Suspicious` (neutral border, triangle icon) tags sit before the category tag, always icon plus words. In the reading pane a bordered notice precedes a flagged message body: a headline with icon, a bulleted list of plain-language reasons, one line of advice, and two outlined buttons. The border is `--alert` only for danger; caution stays neutral. Links in dangerous mail render struck through and inert.
+
+### Sponsorship board
+Five flat columns (Lead, Negotiating, Contracted, Delivered, Paid) on `--rail` with hairline dividers; Passed is hidden behind a toggle. Cards are 1px-ruled `--sheet` blocks with brand, rate, a two-line deliverables note and a deadline; an overdue deadline turns `--alert` and gains a warning icon and the word Overdue. A card is dragged between columns, or moved with the stage select that appears on keyboard focus. A dragged-over column takes the `--selected` tint.
+
+### Meeting invitation and agenda
+The invitation card is a ruled box in the reading pane (`border-line-strong`, no fill): title and local-time range, then place, organizer and attendees as a quiet list, a conflict note in words, and one row of actions. Join is the single accent button; Accept, Tentative and Decline are outlined with an icon and a word each, and the chosen answer is shown with `aria-pressed` and a selected fill plus a sentence, never color alone. The agenda is a ruled day list (sticky day heads, time column, title, place, and a bordered status word). The meeting dialog reuses the dialog and recipient-chip patterns.
+
+### Search box
+Sits at the right end of the list header (about 18rem, capped at 45% of the list): a 32px field with a leading search icon and a clear button, using the same input styling as forms. Focused and empty, it opens a bordered raised cheat sheet of query examples in tabular type. Results replace the list under the title "Search results" with a count.
+
+### Message actions
+A row of icon buttons in the reading pane header, after Reply / Reply all / Forward and a hairline divider: Archive, Move to Trash (becomes Delete forever inside Trash and Junk), Report as junk, and a Move menu listing the account's other folders in a bordered raised popover. Destructive actions have no color treatment; the permanent one asks for confirmation instead.
+
 ### Redaction
 When stream-safe mode is on, private text renders as a flat `--line-strong` bar roughly the length of the text (`.redacted`); the real string never reaches the DOM. Message bodies and the composer are not mounted or are hidden, replaced by a centered notice with an eye-off icon. The sidebar footer shows the mode with a shield icon and the reason ("Automatic: obs64.exe is running"), tinted `--selected` while active.
 

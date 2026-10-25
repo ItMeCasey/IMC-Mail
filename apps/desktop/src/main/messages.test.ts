@@ -35,7 +35,13 @@ describe('MessageService', () => {
   let store: MailStore
   let account: string
   let inbox: string
-  let remote: RemoteMail & { fetchSource: ReturnType<typeof vi.fn>; setFlags: ReturnType<typeof vi.fn> }
+  let remote: RemoteMail & {
+    fetchSource: ReturnType<typeof vi.fn>
+    setFlags: ReturnType<typeof vi.fn>
+    moveMessage: ReturnType<typeof vi.fn>
+    deleteMessage: ReturnType<typeof vi.fn>
+  }
+  let moved: ReturnType<typeof vi.fn>
   let svc: MessageService
 
   beforeEach(() => {
@@ -50,9 +56,12 @@ describe('MessageService', () => {
         source: RAW('Hello', '<p>Hi <b>there</b></p><img src="https://t.example/p.gif">'),
         truncated: false
       })),
-      setFlags: vi.fn(async () => {})
+      setFlags: vi.fn(async () => {}),
+      moveMessage: vi.fn(async () => {}),
+      deleteMessage: vi.fn(async () => {})
     }
-    svc = new MessageService(store, remote)
+    moved = vi.fn()
+    svc = new MessageService(store, remote, moved as (id: string) => void)
   })
 
   it('downloads a body once, caches it, and shares concurrent requests', async () => {

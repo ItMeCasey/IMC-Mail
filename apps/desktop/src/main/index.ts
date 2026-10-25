@@ -1,14 +1,23 @@
-import { app, BrowserWindow, dialog, globalShortcut, protocol, shell } from 'electron'
+import { app, BrowserWindow, dialog, globalShortcut, nativeImage, Notification, protocol, shell } from 'electron'
 import { execFile } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
-import { oauthProviders, type Account } from '@imc/core'
+import { oauthProviders, type Account, type NotificationSettings } from '@imc/core'
 import { Credentials } from './credentials'
+import { brandFrom } from './deals'
 import { openDb, type Db } from './db'
 import { emit, registerIpc } from './ipc'
+import { dealsToCsv } from '@imc/core'
+import { previewOf } from './preview'
+import { dealDeadlineFromEmail } from './deal-deadline'
+import { BadgeController, badgePng } from './badge'
+import { CalendarService } from './calendar'
 import { ComposeService, SmtpMailer } from './compose'
 import { MessageService } from './messages'
+import { SnoozeWaker } from './snooze'
+import { TemplateService } from './templates'
+import { DEFAULT_NOTIFICATIONS, Notifier } from './notifications'
 import { loadOAuthConfig, signIn, TokenProvider } from './oauth'
 import { safeStorageSecrets } from './secrets'
 import { MailStore, type AccountRow } from './store'
@@ -20,6 +29,9 @@ let db: Db
 let sync: SyncManager
 let composeService: ComposeService | undefined
 let streamSafe: StreamSafeController | undefined
+let notifier: Notifier | undefined
+let snoozeWaker: SnoozeWaker | undefined
+let badge: BadgeController | undefined
 
 // Email bodies are served from their own origin with a per-message CSP (see render-email.ts).
 protocol.registerSchemesAsPrivileged([
@@ -79,8 +91,27 @@ app.whenReady().then(async () => {
     return provider && provider !== 'imap' ? oauthProviders[provider] : undefined
   })
   const credentials = new Credentials(secrets, tokens)
-  sync = new SyncManager(store, credentials, (accountId) => emit('sync:changed', { accountId }))
-  const messages = new MessageService(store, sync)
+  sync = new SyncManager(
+    store,
+    credentials,
+    (accountId) => emit('sync:changed', { accountId }),
+    (ids) => notifier?.handleNew(ids)
+  )
+  // The calendar service needs compose to send invitations, and compose needs messages, so the
+  // message service reaches the calendar through this small forwarder.
+  let calendarSvc: CalendarService | undefined
+  const messages = new MessageService(
+    store,
+    sync,
+    (accountId) => {
+      sync.resync(accountId)
+      emit('sync:changed', { accountId })
+    },
+    {
+      ingest: (accountId, messageId, events) => calendarSvc?.ingest(accountId, messageId, events),
+      inviteFor: (messageId) => calendarSvc?.inviteFor(messageId) ?? null
+    }
+  )
   const compose = new ComposeService(
     store,
     new SmtpMailer(credentials, (id, path, raw) => sync.append(id, path, raw)),
@@ -88,10 +119,14 @@ app.whenReady().then(async () => {
       outboxDir: join(userData, 'outbox'),
       ensureBody: (id) => messages.ensureBody(id),
       onChange: () => emit('outbox:changed', {}),
-      onSent: (accountId) => sync.resync(accountId)
+      onSent: (accountId) => sync.resync(accountId),
+      onFollowUp: (accountId, messageId, due) => store.addPendingFollowUp(accountId, messageId, due)
     }
   )
   composeService = compose
+  calendarSvc = new CalendarService(store, { send: (d, o) => compose.send(d, o) })
+  const calendar = calendarSvc
+  const templates = new TemplateService(store, join(userData, 'templates'))
   compose.start()
 
   // Stream-safe mode: settings live in userData/settings.json next to the database.
@@ -125,6 +160,77 @@ app.whenReady().then(async () => {
     }
   })
   streamSafe.start()
+
+  // Desktop notifications for new mail, quiet while stream-safe mode is hiding things.
+  let notificationSettings: NotificationSettings = {
+    ...DEFAULT_NOTIFICATIONS,
+    ...((readSettings()['notifications'] as Partial<NotificationSettings> | undefined) ?? {})
+  }
+  const showToast = (t: { title: string; body: string; messageId: string | null }) => {
+    if (!Notification.isSupported()) return
+    const n = new Notification({ title: t.title, body: t.body })
+    n.on('click', () => {
+      const win = BrowserWindow.getAllWindows()[0]
+      if (win) {
+        if (win.isMinimized()) win.restore()
+        win.show()
+        win.focus()
+      }
+      if (t.messageId) emit('notification:open', { messageId: t.messageId })
+    })
+    n.show()
+  }
+  snoozeWaker = new SnoozeWaker({
+    wakeDue: (now) => store.wakeDue(now),
+    markUnread: async (id) => {
+      store.setLocalFlags(id, { seen: false })
+      // Best effort: without this the next sync would mark it read again, but offline is fine.
+      const m = store.getMessage(id)
+      if (m) {
+        await sync.setFlags(m.accountId, m.folderPath, m.uid, { remove: ['\\Seen'] }).catch(() => {})
+      }
+    },
+    onWoken: (ids) => {
+      for (const accountId of new Set(ids.map((i) => store.getMessage(i)?.accountId).filter(Boolean))) {
+        emit('sync:changed', { accountId: accountId as string })
+      }
+      notifier?.handleWake(ids)
+    }
+  })
+  notifier = new Notifier({
+    getSettings: () => notificationSettings,
+    streamActive: () => streamSafe?.state.active ?? true,
+    load: (ids) => store.incoming(ids),
+    loadSent: (ids) => store.sentItems(ids),
+    show: showToast
+  })
+  snoozeWaker.start()
+  // Follow-up reminders: shown once when due, dropped quietly if someone replied.
+  const followUpTimer = setInterval(() => {
+    const ids = store.followUpTick(Date.now())
+    if (ids.length === 0) return
+    for (const accountId of new Set(ids.map((i) => store.getMessage(i)?.accountId).filter(Boolean))) {
+      emit('sync:changed', { accountId: accountId as string })
+    }
+    notifier?.handleFollowUp(ids)
+  }, 30_000)
+  app.on('will-quit', () => clearInterval(followUpTimer))
+  // Unread count on the taskbar (Windows overlay) or dock / launcher (macOS, Linux).
+  badge = new BadgeController({
+    count: () => store.inboxUnread(),
+    hidden: () => streamSafe?.state.active ?? true,
+    apply: (n) => {
+      if (process.platform === 'win32') {
+        const icon = n > 0 ? nativeImage.createFromBuffer(badgePng(n)) : null
+        for (const w of BrowserWindow.getAllWindows()) {
+          w.setOverlayIcon(icon, n > 0 ? `${n} unread` : '')
+        }
+      } else {
+        app.setBadgeCount(n)
+      }
+    }
+  })
+  badge.start()
   if (!globalShortcut.register('CommandOrControl+Shift+L', () => streamSafe?.toggle())) {
     console.warn('[stream-safe] Ctrl+Shift+L is taken by another app; use the sidebar control instead')
   }
@@ -134,6 +240,7 @@ app.whenReady().then(async () => {
     const url = new URL(req.url)
     const rendered = messages.render(decodeURIComponent(url.pathname.slice(1)), {
       allowImages: url.searchParams.get('images') === '1',
+      allowLinks: url.searchParams.get('links') === '1',
       fg: url.searchParams.get('fg') ?? undefined,
       bg: url.searchParams.get('bg') ?? undefined
     })
@@ -232,8 +339,71 @@ app.whenReady().then(async () => {
 
     'folders:list': () => store.listFolders(),
     'messages:list': (q) => store.listMessages(q),
+    'messages:search': ({ q }) => store.search(q),
+    'messages:snooze': ({ id, until }) => {
+      messages.snooze(id, until)
+    },
+    'folders:loadOlder': async ({ folderId }) => {
+      const f = store.getFolder(folderId)
+      if (!f) throw new Error('That folder no longer exists')
+      const r = await sync.loadOlder(f.accountId, f)
+      emit('sync:changed', { accountId: f.accountId })
+      return r
+    },
+    'labels:list': () => store.listLabels(),
+    'labels:create': ({ name }) => store.createLabel(name),
+    'labels:delete': ({ id }) => {
+      store.deleteLabel(id)
+    },
+    'messages:setLabels': ({ id, labelIds }) => {
+      messages.setLabels(id, labelIds)
+    },
+    'messages:followUp': ({ id, at }) => {
+      messages.followUp(id, at)
+    },
+    'messages:markSafe': ({ id, safe }) => {
+      messages.markSafe(id, safe)
+    },
+    'messages:setCategory': ({ id, category }) => {
+      store.setCategory(id, category)
+    },
+    'views:counts': () => store.viewCounts(),
+    'deals:exportCsv': async () => {
+      const target = await dialog.showSaveDialog({
+        defaultPath: join(app.getPath('downloads'), 'sponsorship-deals.csv'),
+        filters: [{ name: 'CSV spreadsheet', extensions: ['csv'] }]
+      })
+      if (target.canceled || !target.filePath) return { saved: null }
+      // The byte-order mark makes Excel read the file as UTF-8 (brand names keep their accents).
+      await writeFile(target.filePath, '﻿' + dealsToCsv(store.listDeals()), 'utf8')
+      return { saved: target.filePath }
+    },
+    'deals:list': () => store.listDeals(),
+    'deals:create': ({ messageId, accountId, patch }) => {
+      const m = messageId ? store.getMessage(messageId) : undefined
+      const acct = m?.accountId ?? accountId ?? store.listAccounts()[0]?.id
+      if (!acct) throw new Error('Add an account first')
+      const brand = patch?.brand ?? (m ? brandFrom(m.fromName, m.fromAddr) : 'New deal')
+      // Starting from an email: pick up a deadline it asks for, unless you already gave one.
+      const found = m && patch?.dueDate === undefined ? dealDeadlineFromEmail(m.subject, store.getBody(m.id)) : null
+      return store.createDeal({
+        ...patch,
+        ...(found ? { dueDate: found.dueDate, notes: [patch?.notes, found.note].filter(Boolean).join('\n') } : {}),
+        accountId: acct,
+        messageId: m?.id ?? null,
+        brand
+      })
+    },
+    'deals:update': ({ id, patch }) => store.updateDeal(id, patch),
+    'deals:delete': ({ id }) => {
+      store.deleteDeal(id)
+    },
     'messages:open': ({ id }) => messages.open(id),
     'messages:loadBody': ({ id }) => messages.loadBody(id),
+    'messages:act': ({ id, action, folderId }) => messages.act(id, action, folderId),
+    'messages:undoMove': async (u) => {
+      await messages.undoMove(u)
+    },
     'messages:setFlags': async ({ id, seen, flagged }) => {
       await messages.setFlags(id, { seen, flagged })
       const accountId = store.getMessage(id)?.accountId
@@ -248,7 +418,7 @@ app.whenReady().then(async () => {
       const pick = await dialog.showOpenDialog({ properties: ['openFile', 'multiSelections'] })
       return pick.canceled ? [] : compose.vetFiles(pick.filePaths)
     },
-    'compose:send': (draft) => compose.send(draft),
+    'compose:send': ({ sendAt, ...draft }) => compose.send(draft, { sendAt }),
     'compose:undo': ({ outboxId }) => compose.undo(outboxId),
     'compose:saveDraft': (draft) => compose.saveDraft(draft),
     'compose:drafts': () => compose.listDrafts(),
@@ -258,11 +428,57 @@ app.whenReady().then(async () => {
     },
     'contacts:search': ({ q }) => compose.contacts(q),
     'outbox:list': () => compose.list(),
+    'calendar:respond': ({ messageId, response, comment }) =>
+      calendar.respond(messageId, response, comment),
+    'calendar:list': ({ from, to }) => calendar.list(from, to),
+    'calendar:schedule': (input) => calendar.schedule(input),
+    'calendar:update': ({ id, patch }) => calendar.update(id, patch),
+    'calendar:cancel': ({ id }) => calendar.cancel(id),
+    'calendar:exportIcs': async ({ id }) => {
+      const ics = calendar.exportIcs(id)
+      const target = await dialog.showSaveDialog({
+        defaultPath: join(app.getPath('downloads'), safeFilename(ics.filename)),
+        filters: [{ name: 'Calendar event', extensions: ['ics'] }]
+      })
+      if (target.canceled || !target.filePath) return { saved: null }
+      await writeFile(target.filePath, ics.content, 'utf8')
+      return { saved: target.filePath }
+    },
+    'templates:list': () => templates.list(),
+    'templates:save': (input) => templates.save(input),
+    'templates:delete': async ({ id }) => {
+      await templates.delete(id)
+    },
+    'notifications:get': () => notificationSettings,
+    'notifications:set': (patch) => {
+      notificationSettings = { ...notificationSettings, ...patch }
+      writeFileSync(
+        settingsFile,
+        JSON.stringify({ ...readSettings(), notifications: notificationSettings }, null, 2)
+      )
+      return notificationSettings
+    },
+    'notifications:test': () => {
+      if (streamSafe?.state.active && notificationSettings.whenStreamSafe === 'silent') {
+        return { shown: false, reason: 'Stream-safe mode is on, so notifications are silent' }
+      }
+      if (!Notification.isSupported()) {
+        return { shown: false, reason: 'This system cannot show notifications' }
+      }
+      showToast({ title: 'IMC-Mail', body: 'This is how new mail will look.', messageId: null })
+      return { shown: true, reason: null }
+    },
     'streamsafe:get': () => streamSafe!.state,
     'streamsafe:set': (patch) => streamSafe!.update(patch),
     'streamsafe:toggle': () => streamSafe!.toggle(),
     'senders:allowImages': ({ address }) => {
       messages.allowImages(address)
+    },
+    'attachments:preview': async ({ messageId, attachmentId }) => {
+      const meta = store.getBody(messageId)?.attachments.find((a) => a.id === attachmentId)
+      if (!meta) throw new Error('That attachment is not available')
+      const att = await messages.attachment(messageId, attachmentId)
+      return previewOf(meta.filename, meta.mime, att.content)
     },
     'attachments:save': async ({ messageId, attachmentId }) => {
       const meta = store.getBody(messageId)?.attachments.find((a) => a.id === attachmentId)
@@ -277,10 +493,15 @@ app.whenReady().then(async () => {
     }
   })
 
+  store.backfillCategories()
   sync.startAll()
   createWindow()
+  badge?.reset()
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (BrowserWindow.getAllWindows().length === 0) {
+      createWindow()
+      badge?.reset()
+    }
   })
 })
 
@@ -289,6 +510,9 @@ app.on('window-all-closed', () => {
 })
 
 app.on('will-quit', () => {
+  snoozeWaker?.stop()
+  badge?.stop()
+  notifier?.stop()
   streamSafe?.stop()
   globalShortcut.unregisterAll()
   composeService?.stop()

@@ -18,7 +18,15 @@ import {
   X,
   type LucideIcon
 } from 'lucide-react'
-import type { Account, Draft, DraftAttachment } from '@imc/core'
+import {
+  fillTemplate,
+  placeholdersIn,
+  type Account,
+  type Draft,
+  type DraftAttachment,
+  type Template
+} from '@imc/core'
+import { ScheduleMenu, TemplatesMenu } from './ComposerMenus'
 import RecipientInput, { isValidRecipient } from './RecipientInput'
 import { tapeColor } from './tape'
 
@@ -95,6 +103,7 @@ export default function Composer({
   const [error, setError] = useState<string | null>(null)
   const [dragging, setDragging] = useState(false)
   const [sigOpen, setSigOpen] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
 
   const account = accounts.find((a) => a.id === accountId)
   const [signature, setSignature] = useState(account?.signature ?? '')
@@ -163,12 +172,21 @@ export default function Composer({
     }
   }
 
-  const send = async () => {
+  const [followUpDays, setFollowUpDays] = useState(0)
+  const send = async (sendAt?: number) => {
     if (busy) return
+    // Placeholders like {{rate}} that nothing filled in would go out as literal text.
+    const left = placeholdersIn(`${subject} ${editor?.getText() ?? ''}`)
+    if (
+      left.length > 0 &&
+      !confirm(`This message still has ${left.map((v) => '{{' + v + '}}').join(', ')} to fill in. Send anyway?`)
+    ) {
+      return
+    }
     setBusy(true)
     setError(null)
     try {
-      await window.imc.invoke('compose:send', current())
+      await window.imc.invoke('compose:send', { ...current(), sendAt, followUpDays: followUpDays || undefined })
       void qc.invalidateQueries({ queryKey: ['drafts'] })
       onQueued()
       onClose()
@@ -198,6 +216,55 @@ export default function Composer({
     if (url === null) return
     if (url === '') editor.chain().focus().extendMarkRange('link').unsetLink().run()
     else editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run()
+  }
+
+  /** Drops a saved reply into the message, filling {{variables}} from who it is going to. */
+  const applyTemplate = (t: Template) => {
+    if (!editor) return
+    const vars = {
+      recipient: to[0],
+      myName: account?.displayName || undefined,
+      myEmail: account?.email,
+      subject
+    }
+    const body = fillTemplate(t.html, vars, true)
+    editor.chain().focus().insertContent(body.text).run()
+    const subj = t.subject ? fillTemplate(t.subject, vars) : null
+    if (subj && !subject.trim()) setSubject(subj.text)
+    if (t.attachments.length > 0) {
+      setAttachments((list) => [
+        ...list,
+        ...t.attachments.filter((a) => !list.some((x) => x.path === a.path))
+      ])
+    }
+    const missing = [...new Set([...body.unresolved, ...(subj?.unresolved ?? [])])]
+    setNote(
+      missing.length > 0
+        ? `Fill in ${missing.map((v) => '{{' + v + '}}').join(', ')} before sending.`
+        : null
+    )
+  }
+
+  const saveAsTemplate = async () => {
+    const name = window.prompt('Name this template', subject.trim() || 'New template')?.trim()
+    if (!name) return
+    const existing = (await window.imc.invoke('templates:list')).find(
+      (t) => t.name.toLowerCase() === name.toLowerCase()
+    )
+    if (existing && !confirm(`Replace the existing template "${existing.name}"?`)) return
+    try {
+      await window.imc.invoke('templates:save', {
+        id: existing?.id,
+        name,
+        subject,
+        html,
+        attachments
+      })
+      await qc.invalidateQueries({ queryKey: ['templates'] })
+      setNote(`Saved the template "${name}".`)
+    } catch (e) {
+      setError(errText(e))
+    }
   }
 
   const invalid = [...to, ...cc, ...bcc].filter((r) => !isValidRecipient(r))
@@ -306,6 +373,7 @@ export default function Composer({
         <ToolButton label="Redo" Icon={Redo2} disabled={!editor?.can().redo()} onClick={() => editor?.chain().focus().redo().run()} />
         <span className="mx-1 h-5 w-px bg-line" aria-hidden />
         <ToolButton label="Attach files" Icon={Paperclip} onClick={() => void attach()} />
+        <TemplatesMenu onPick={applyTemplate} onSaveAs={() => void saveAsTemplate()} />
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
@@ -363,6 +431,12 @@ export default function Composer({
         </div>
       )}
 
+      {note && (
+        <p role="status" className="border-t border-line px-4 py-2 text-sm text-ink-2">
+          {note}
+        </p>
+      )}
+
       {(error || invalid.length > 0) && (
         <p role="alert" className="flex items-start gap-2 border-t border-line px-4 py-2 text-alert">
           <TriangleAlert size={16} strokeWidth={1.75} className="mt-0.5 shrink-0" aria-hidden />
@@ -371,14 +445,32 @@ export default function Composer({
       )}
 
       <footer className="flex shrink-0 items-center gap-2 border-t border-line px-4 py-3">
-        <button
-          type="button"
-          onClick={() => void send()}
-          disabled={busy || invalid.length > 0}
-          className="h-9 rounded-md bg-accent px-5 font-medium text-on-accent transition-colors duration-(--dur-fast) hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {busy ? 'Queuing' : 'Send'}
-        </button>
+        <span className="flex">
+          <button
+            type="button"
+            onClick={() => void send()}
+            disabled={busy || invalid.length > 0}
+            className="h-9 rounded-l-md bg-accent px-5 font-medium text-on-accent transition-colors duration-(--dur-fast) hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {busy ? 'Queuing' : 'Send'}
+          </button>
+          <ScheduleMenu disabled={busy || invalid.length > 0} onSchedule={(at) => void send(at)} />
+        </span>
+        <label className="flex items-center gap-1.5 text-sm text-ink-2">
+          <span className="sr-only">Remind me if nobody replies</span>
+          <select
+            aria-label="Remind me if nobody replies"
+            value={followUpDays}
+            onChange={(e) => setFollowUpDays(Number(e.target.value))}
+            className="h-9 rounded-md border border-line-strong bg-sheet px-2 text-ink"
+          >
+            <option value={0}>No follow-up reminder</option>
+            <option value={2}>Remind if no reply in 2 days</option>
+            <option value={3}>Remind if no reply in 3 days</option>
+            <option value={7}>Remind if no reply in 1 week</option>
+            <option value={14}>Remind if no reply in 2 weeks</option>
+          </select>
+        </label>
         <span className="text-sm text-ink-3">Ctrl+Enter</span>
         <button
           type="button"
