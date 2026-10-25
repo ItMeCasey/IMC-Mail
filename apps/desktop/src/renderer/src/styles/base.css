@@ -86,6 +86,16 @@ dialog::backdrop {
 }
 
 @layer components {
+/* Stand-in for hidden text while stream-safe mode is on: a flat bar the length of the text. */
+.redacted {
+  display: inline-block;
+  height: 0.85em;
+  max-width: 100%;
+  vertical-align: -0.1em;
+  border-radius: var(--radius-sm);
+  background: var(--line-strong);
+}
+
 /* Data: tabular numerals so track numbers, counts, and times line up. */
 .num {
   font-variant-numeric: tabular-nums;

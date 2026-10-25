@@ -8,6 +8,7 @@ import OutboxToast from './OutboxToast'
 import MessageList from './MessageList'
 import ReadingPane from './ReadingPane'
 import Sidebar from './Sidebar'
+import { HiddenNotice, useStreamSafe } from './streamsafe'
 import {
   useAccounts,
   useDrafts,
@@ -32,6 +33,8 @@ function Shell() {
   const [composer, setComposer] = useState<{ key: number; seed: Draft } | null>(null)
   const [draftsOpen, setDraftsOpen] = useState(false)
   const [composeError, setComposeError] = useState<string | null>(null)
+  const stream = useStreamSafe()
+  const hide = stream.active
   const drafts = useDrafts()
   const messages = useMessages(selection)
   const thread = useThread(openId)
@@ -40,12 +43,28 @@ function Shell() {
   const folder = folders.data?.find((f) => f.id === selection.folderId)
   const account = accounts.data?.find((a) => a.id === selection.accountId)
   const title = folder
-    ? `${account?.displayName || account?.email || ''} · ${folder.name}`
+    ? hide
+      ? folder.name
+      : `${account?.displayName || account?.email || ''} · ${folder.name}`
     : 'All inboxes'
+
+  const blocked = () => {
+    setComposeError('Stream-safe mode is on. Press Ctrl+Shift+L to turn it off first.')
+  }
+
+  // Close anything that shows private content the moment the mode turns on.
+  useEffect(() => {
+    if (hide) {
+      setAdding(false)
+      setDraftsOpen(false)
+    }
+  }, [hide])
 
   // Opening a message marks it read, once per message.
   const markedRead = useRef(new Set<string>())
   useEffect(() => {
+    // A message you could not see has not been read.
+    if (hide) return
     const sel = thread.data?.messages.find((m) => m.id === thread.data?.selectedId)
     if (!sel?.unread || markedRead.current.has(sel.id)) return
     markedRead.current.add(sel.id)
@@ -53,7 +72,7 @@ function Shell() {
       .invoke('messages:setFlags', { id: sel.id, seen: true })
       .then(() => qc.invalidateQueries())
       .catch(() => markedRead.current.delete(sel.id)) // offline: try again on the next open
-  }, [thread.data, qc])
+  }, [thread.data, qc, hide])
 
   // Escape closes the reading pane, unless a dialog is up.
   useEffect(() => {
@@ -70,6 +89,7 @@ function Shell() {
     signatureHtml(accounts.data?.find((a) => a.id === accountId)?.signature ?? '')
 
   const newMessage = () => {
+    if (hide) return blocked()
     const first = accounts.data?.find((a) => a.id === selection.accountId) ?? accounts.data?.[0]
     if (!first) return
     openComposer({
@@ -84,6 +104,7 @@ function Shell() {
   }
 
   const reply = async (messageId: string, mode: ReplyMode) => {
+    if (hide) return blocked()
     setComposeError(null)
     try {
       const ctx = await window.imc.invoke('compose:replyContext', { messageId, mode })
@@ -104,6 +125,7 @@ function Shell() {
   }
 
   const openDraft = async (id: string) => {
+    if (hide) return blocked()
     const d = await window.imc.invoke('compose:loadDraft', { id })
     if (d) openComposer(d)
   }
@@ -126,9 +148,10 @@ function Shell() {
         folders={folders.data ?? []}
         selection={selection}
         onSelect={select}
-        onAdd={() => setAdding(true)}
+        onAdd={() => (hide ? blocked() : setAdding(true))}
         onCompose={newMessage}
-        onDrafts={() => setDraftsOpen(true)}
+        onDrafts={() => (hide ? blocked() : setDraftsOpen(true))}
+        streamSafe={stream}
         draftCount={drafts.data?.length ?? 0}
         onRemove={remove}
         onResync={(id) => void window.imc.invoke('accounts:resync', { id })}
@@ -138,15 +161,18 @@ function Shell() {
         messages={messages.data ?? []}
         accounts={accounts.data ?? []}
         loading={messages.isPending || accounts.isPending}
+        hide={hide}
         selectedId={openId}
         forceCompact={composer !== null}
         onSelect={(id) => {
           setComposer(null)
           setOpenId(id)
         }}
-        onAdd={() => setAdding(true)}
+        onAdd={() => (hide ? blocked() : setAdding(true))}
       />
+      {composer && hide && <HiddenNotice what="The message you are writing" />}
       {composer && accounts.data && (
+        <div className={hide ? 'hidden' : 'contents'}>
         <Composer
           key={composer.key}
           seed={composer.seed}
@@ -154,8 +180,10 @@ function Shell() {
           onClose={() => setComposer(null)}
           onQueued={() => void qc.invalidateQueries({ queryKey: ['outbox'] })}
         />
+        </div>
       )}
-      {openId && !composer && (
+      {openId && !composer && hide && <HiddenNotice what="This message" />}
+      {openId && !composer && !hide && (
         <ReadingPane
           key={openId}
           thread={thread.data}
@@ -180,7 +208,7 @@ function Shell() {
           onOpen={(id) => void openDraft(id)}
         />
       )}
-      <OutboxToast onEdit={openComposer} />
+      <OutboxToast onEdit={openComposer} hide={hide} />
       {adding && <AddAccount onClose={() => setAdding(false)} />}
     </div>
   )

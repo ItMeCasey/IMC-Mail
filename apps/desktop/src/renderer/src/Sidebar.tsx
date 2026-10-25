@@ -15,7 +15,9 @@ import {
   TriangleAlert,
   X
 } from 'lucide-react'
-import type { Account, Folder, FolderRole } from '@imc/core'
+import type { Account, Folder, FolderRole, StreamSafeState } from '@imc/core'
+import { Private, priv } from './streamsafe'
+import StreamSafeControl from './StreamSafeControl'
 import type { Selection } from './hooks'
 import { tapeColor } from './tape'
 import ThemeSwitch from './ThemeSwitch'
@@ -50,6 +52,7 @@ export default function Sidebar({
   onCompose,
   onDrafts,
   draftCount,
+  streamSafe,
   onRemove,
   onResync
 }: {
@@ -61,10 +64,12 @@ export default function Sidebar({
   onCompose: () => void
   onDrafts: () => void
   draftCount: number
+  streamSafe: StreamSafeState
   onRemove: (id: string) => void
   onResync: (id: string) => void
 }) {
   const unifiedUnread = folders.filter((f) => f.role === 'inbox').reduce((n, f) => n + f.unread, 0)
+  const hide = streamSafe.active
   const isUnified = !selection.accountId && !selection.folderId
 
   return (
@@ -92,14 +97,14 @@ export default function Sidebar({
         </button>
 
         {accounts.map((a) => (
-          <section key={a.id} aria-label={a.email} className="space-y-0.5">
+          <section key={a.id} aria-label={priv(hide, a.email, 'Account')} className="space-y-0.5">
             <div className="group flex items-center gap-2 px-2 pb-1">
               <span className="tape" style={{ background: tapeColor(a.color) }} aria-hidden />
               <span
                 className="min-w-0 flex-1 truncate text-sm font-medium text-ink-2"
-                title={a.email}
+                title={hide ? undefined : a.email}
               >
-                {a.displayName || a.email}
+                <Private active={hide}>{a.displayName || a.email}</Private>
               </span>
               {(a.syncState === 'connecting' || a.syncState === 'syncing') && (
                 <span className="flex items-center gap-1 text-xs text-ink-3">
@@ -110,7 +115,7 @@ export default function Sidebar({
               <button
                 className={iconBtn}
                 title="Sync now"
-                aria-label={`Sync ${a.email} now`}
+                aria-label={`Sync ${priv(hide, a.email, 'account')} now`}
                 onClick={() => onResync(a.id)}
               >
                 <RefreshCw size={13} strokeWidth={1.75} aria-hidden />
@@ -118,9 +123,9 @@ export default function Sidebar({
               <button
                 className={iconBtn}
                 title="Remove account"
-                aria-label={`Remove ${a.email}`}
+                aria-label={`Remove ${priv(hide, a.email, 'account')}`}
                 onClick={() => {
-                  if (confirm(`Remove ${a.email}? Cached mail is deleted from this computer only.`))
+                  if (confirm(`Remove ${priv(hide, a.email, 'this account')}? Cached mail is deleted from this computer only.`))
                     onRemove(a.id)
                 }}
               >
@@ -134,7 +139,7 @@ export default function Sidebar({
                 className="mx-2 mb-1 flex items-start gap-1.5 text-sm leading-snug text-alert"
               >
                 <TriangleAlert size={14} strokeWidth={1.75} className="mt-0.5 shrink-0" aria-hidden />
-                {a.lastError}
+                <Private active={hide}>{a.lastError}</Private>
               </p>
             )}
 
@@ -168,6 +173,7 @@ export default function Sidebar({
             <span className="num text-sm text-ink-2">{draftCount}</span>
           </button>
         )}
+        <StreamSafeControl state={streamSafe} />
         <ThemeSwitch />
         <button
           onClick={onAdd}

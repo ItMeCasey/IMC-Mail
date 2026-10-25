@@ -1,5 +1,6 @@
 import { Plus, Star } from 'lucide-react'
 import type { Account, MessageSummary } from '@imc/core'
+import { Private, priv } from './streamsafe'
 import { tapeColor } from './tape'
 
 const dayFmt = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' })
@@ -76,6 +77,7 @@ export default function MessageList({
   messages,
   accounts,
   loading,
+  hide,
   selectedId,
   forceCompact = false,
   onSelect,
@@ -85,6 +87,8 @@ export default function MessageList({
   messages: MessageSummary[]
   accounts: Account[]
   loading: boolean
+  /** Stream-safe mode: show bars instead of senders and subjects. */
+  hide: boolean
   selectedId: string | null
   /** Keep the narrow two-line layout even with no message open (the composer is showing). */
   forceCompact?: boolean
@@ -146,14 +150,14 @@ export default function MessageList({
                     className="tape mt-1.5"
                     style={{ background: tapeColor(color.get(m.accountId)) }}
                     role="img"
-                    aria-label={email.get(m.accountId) ?? 'Account'}
+                    aria-label={priv(hide, email.get(m.accountId) ?? 'Account', 'Account')}
                   />
                   <span className="min-w-0 flex-1">
                     <span className="flex items-baseline gap-2">
                       <span
                         className={`min-w-0 flex-1 truncate ${m.unread ? 'font-semibold text-ink' : 'text-ink-2'}`}
                       >
-                        {m.fromName || m.fromAddr || '(unknown)'}
+                        <Private active={hide}>{m.fromName || m.fromAddr || '(unknown)'}</Private>
                       </span>
                       <time className="num shrink-0 text-sm text-ink-3">{formatDate(m.date)}</time>
                     </span>
@@ -161,7 +165,7 @@ export default function MessageList({
                       <span
                         className={`min-w-0 flex-1 truncate ${m.unread ? 'font-medium text-ink' : 'text-ink-2'}`}
                       >
-                        {m.subject || '(no subject)'}
+                        <Private active={hide}>{m.subject || '(no subject)'}</Private>
                       </span>
                       <Marks m={m} />
                     </span>
@@ -232,14 +236,14 @@ export default function MessageList({
                           className="tape"
                           style={{ background: tapeColor(color.get(m.accountId)) }}
                           role="img"
-                          aria-label={email.get(m.accountId) ?? 'Account'}
+                          aria-label={priv(hide, email.get(m.accountId) ?? 'Account', 'Account')}
                         />
                       </td>
                       <td className={`${td} ${m.unread ? 'font-semibold text-ink' : 'text-ink-2'}`}>
-                        {m.fromName || m.fromAddr || '(unknown)'}
+                        <Private active={hide}>{m.fromName || m.fromAddr || '(unknown)'}</Private>
                       </td>
                       <td className={`${td} ${m.unread ? 'font-medium text-ink' : 'text-ink-2'}`}>
-                        {m.subject || '(no subject)'}
+                        <Private active={hide}>{m.subject || '(no subject)'}</Private>
                       </td>
                       <td className={`${td} num text-right text-sm text-ink-3`}>
                         {formatDate(m.date)}

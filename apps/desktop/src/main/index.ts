@@ -1,4 +1,6 @@
-import { app, BrowserWindow, dialog, protocol, shell } from 'electron'
+import { app, BrowserWindow, dialog, globalShortcut, protocol, shell } from 'electron'
+import { execFile } from 'node:child_process'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { oauthProviders, type Account } from '@imc/core'
@@ -11,11 +13,13 @@ import { loadOAuthConfig, signIn, TokenProvider } from './oauth'
 import { safeStorageSecrets } from './secrets'
 import { MailStore, type AccountRow } from './store'
 import { testConnection } from './sync/engine'
+import { parseProcessList, StreamSafeController, type StreamSafeSettings } from './streamsafe'
 import { SyncManager } from './sync/manager'
 
 let db: Db
 let sync: SyncManager
 let composeService: ComposeService | undefined
+let streamSafe: StreamSafeController | undefined
 
 // Email bodies are served from their own origin with a per-message CSP (see render-email.ts).
 protocol.registerSchemesAsPrivileged([
@@ -42,6 +46,7 @@ function createWindow(): void {
     }
   })
 
+  win.setContentProtection(!!streamSafe && streamSafe.state.active && streamSafe.state.hideFromCapture)
   win.once('ready-to-show', () => win.show())
 
   // Never navigate the app window or open child windows; hand external links to the OS browser.
@@ -88,6 +93,41 @@ app.whenReady().then(async () => {
   )
   composeService = compose
   compose.start()
+
+  // Stream-safe mode: settings live in userData/settings.json next to the database.
+  const settingsFile = join(userData, 'settings.json')
+  const readSettings = (): Record<string, unknown> => {
+    try {
+      return existsSync(settingsFile) ? JSON.parse(readFileSync(settingsFile, 'utf8')) : {}
+    } catch {
+      return {}
+    }
+  }
+  streamSafe = new StreamSafeController({
+    listProcesses: () =>
+      new Promise((resolve, reject) => {
+        const [cmd, args] =
+          process.platform === 'win32'
+            ? ['tasklist', ['/FO', 'CSV', '/NH']]
+            : ['ps', ['-A', '-o', 'comm=']]
+        execFile(cmd as string, args as string[], { timeout: 4000, windowsHide: true }, (err, out) =>
+          err ? reject(err) : resolve(parseProcessList(out, process.platform))
+        )
+      }),
+    loadSettings: () => (readSettings()['streamSafe'] as StreamSafeSettings | undefined) ?? null,
+    saveSettings: (s) => writeFileSync(settingsFile, JSON.stringify({ ...readSettings(), streamSafe: s }, null, 2)),
+    onChange: (state) => {
+      // Hiding the window from capture also blanks its taskbar thumbnail.
+      for (const w of BrowserWindow.getAllWindows()) {
+        w.setContentProtection(state.active && state.hideFromCapture)
+      }
+      emit('streamsafe:changed', state)
+    }
+  })
+  streamSafe.start()
+  if (!globalShortcut.register('CommandOrControl+Shift+L', () => streamSafe?.toggle())) {
+    console.warn('[stream-safe] Ctrl+Shift+L is taken by another app; use the sidebar control instead')
+  }
   let signInAbort: AbortController | null = null
 
   protocol.handle('imc-body', (req) => {
@@ -218,6 +258,9 @@ app.whenReady().then(async () => {
     },
     'contacts:search': ({ q }) => compose.contacts(q),
     'outbox:list': () => compose.list(),
+    'streamsafe:get': () => streamSafe!.state,
+    'streamsafe:set': (patch) => streamSafe!.update(patch),
+    'streamsafe:toggle': () => streamSafe!.toggle(),
     'senders:allowImages': ({ address }) => {
       messages.allowImages(address)
     },
@@ -246,6 +289,8 @@ app.on('window-all-closed', () => {
 })
 
 app.on('will-quit', () => {
+  streamSafe?.stop()
+  globalShortcut.unregisterAll()
   composeService?.stop()
   sync?.stopAll()
   db?.close()

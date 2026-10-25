@@ -185,6 +185,9 @@ Message HTML always renders on white inside a bordered, sandboxed frame, because
 ### Composer
 Takes the reading pane's slot, so the list stays visible beside it. Header fields are hairline-ruled rows with a fixed 40px label column: From (tape square plus account select), To / Cc / Bcc as recipient chips, Subject. Invalid recipients get an alert border and a title. A single icon toolbar sits above a plain editing surface with no inner box. Send is the one primary button; Ctrl+Enter sends. A bordered raised bar at the bottom center shows the undo countdown, then "Sent", or the error with an Edit action.
 
+### Redaction
+When stream-safe mode is on, private text renders as a flat `--line-strong` bar roughly the length of the text (`.redacted`); the real string never reaches the DOM. Message bodies and the composer are not mounted or are hidden, replaced by a centered notice with an eye-off icon. The sidebar footer shows the mode with a shield icon and the reason ("Automatic: obs64.exe is running"), tinted `--selected` while active.
+
 ### Layering
 `base.css` wraps resets in `@layer base` and component classes (`.mark`, `.tape`, `.composer-body`) in `@layer components`, so Tailwind utilities always win. Never add unlayered element selectors: they silently beat utilities.
 

@@ -14,6 +14,8 @@ import {
   outboxItemSchema,
   replyContextSchema,
   replyModeSchema,
+  streamSafeModeSchema,
+  streamSafeStateSchema,
   threadSchema
 } from './schemas'
 
@@ -151,6 +153,23 @@ export const ipcContract = {
     input: z.undefined(),
     output: z.array(outboxItemSchema)
   },
+  'streamsafe:get': {
+    input: z.undefined(),
+    output: streamSafeStateSchema
+  },
+  'streamsafe:set': {
+    input: z.object({
+      mode: streamSafeModeSchema.optional(),
+      hideFromCapture: z.boolean().optional(),
+      watch: z.array(z.string().trim().toLowerCase().min(1).max(100)).max(50).optional()
+    }),
+    output: streamSafeStateSchema
+  },
+  /** Flips stream-safe mode for now (what the global hotkey does). */
+  'streamsafe:toggle': {
+    input: z.undefined(),
+    output: streamSafeStateSchema
+  },
   /** Asks where to save, then writes the attachment. `saved` is the path, or null if cancelled. */
   'attachments:save': {
     input: z.object({ messageId: z.string(), attachmentId: z.string() }),
@@ -163,7 +182,8 @@ export const ipcEvents = {
   /** Something in the local cache changed for this account. */
   'sync:changed': z.object({ accountId: z.string() }),
   /** The outbox changed: a message was queued, sent, failed, or undone. */
-  'outbox:changed': z.object({})
+  'outbox:changed': z.object({}),
+  'streamsafe:changed': streamSafeStateSchema
 } as const
 
 export type IpcContract = typeof ipcContract

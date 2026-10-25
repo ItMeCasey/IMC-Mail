@@ -199,3 +199,23 @@ export type OutboxItem = z.infer<typeof outboxItemSchema>
 
 export const contactSchema = z.object({ name: z.string(), address: z.string() })
 export type Contact = z.infer<typeof contactSchema>
+
+// ---- Stream-safe mode -------------------------------------------------------------
+
+export const streamSafeModeSchema = z.enum(['auto', 'on', 'off'])
+export type StreamSafeMode = z.infer<typeof streamSafeModeSchema>
+
+export const streamSafeStateSchema = z.object({
+  /** Whether private content is hidden right now. */
+  active: z.boolean(),
+  mode: streamSafeModeSchema,
+  /** The hotkey flipped the state for now; clears when streaming software starts or stops. */
+  overridden: z.boolean(),
+  /** Name of the streaming program found running, if any. */
+  detected: z.string().nullable(),
+  /** While active, also keep the window out of screen capture and window capture. */
+  hideFromCapture: z.boolean(),
+  /** Program names (lowercase) that count as "streaming software is running". */
+  watch: z.array(z.string())
+})
+export type StreamSafeState = z.infer<typeof streamSafeStateSchema>

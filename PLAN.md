@@ -88,6 +88,8 @@ SQLite: accounts, folders, messages, threads, attachments, FTS,
 - FTS5 search with operators (`from:`, `has:attachment`, `account:`, `before:`).
 - Saved searches, local rules (move/label/categorize), contacts auto-collected.
 
+> **Phase 5 status (built):** Auto / Always on / Off modes, detection of streaming software by process name (OBS, Streamlabs, Twitch Studio, XSplit, vMix and more, editable list), global hotkey Ctrl+Shift+L, window excluded from screen and window capture (OS-level), senders, subjects, bodies, account names and errors replaced by bars, composer and dialogs blocked. **Still open:** masking OS notifications (none exist yet), a UI to edit the watch list, hotkey customization, per-account exclusions.
+
 ### Phase 5: Stream-safe mode (signature feature)
 - Toggle (hotkey) that masks senders, subjects, previews, and avatars, silences notifications, and blurs the reading pane.
 - Auto-trigger when OBS / Streamlabs / Twitch Studio process is detected, or via manual "Live" toggle; optional per-account exclusions.

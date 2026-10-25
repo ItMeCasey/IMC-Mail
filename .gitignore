@@ -14,3 +14,4 @@ oauth.json
 **/.impeccable/review/
 **/.impeccable/questions/
 **/.impeccable/mocks/
+*.tsbuildinfo

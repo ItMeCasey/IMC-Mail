@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { TriangleAlert } from 'lucide-react'
 import type { Draft, OutboxItem } from '@imc/core'
 import { useOutbox } from './hooks'
+import { Private } from './streamsafe'
 
 const btn =
   'h-8 rounded-md border border-line-strong px-3 text-sm text-ink transition-colors duration-(--dur-fast) hover:bg-hover'
@@ -10,7 +11,7 @@ const btn =
 /** Sent confirmations stay a few seconds; queued, sending, and failed items stay until resolved. */
 const SENT_VISIBLE_MS = 4000
 
-function Row({ item, now, onUndo }: { item: OutboxItem; now: number; onUndo: (id: string) => void }) {
+function Row({ item, now, onUndo, hide }: { item: OutboxItem; now: number; onUndo: (id: string) => void; hide: boolean }) {
   const to = item.to[0] ? `${item.to[0]}${item.to.length > 1 ? ` +${item.to.length - 1}` : ''}` : ''
   const secs = Math.max(0, Math.ceil((item.sendAt - now) / 1000))
 
@@ -19,8 +20,10 @@ function Row({ item, now, onUndo }: { item: OutboxItem; now: number; onUndo: (id
       <div role="alert" className="flex items-center gap-3">
         <TriangleAlert size={16} strokeWidth={1.75} className="shrink-0 text-alert" aria-hidden />
         <span className="min-w-0 flex-1">
-          <span className="block truncate">Could not send “{item.subject || '(no subject)'}”</span>
-          <span className="block truncate text-sm text-alert">{item.error}</span>
+          <span className="block truncate">Could not send “<Private active={hide}>{item.subject || '(no subject)'}</Private>”</span>
+          <span className="block truncate text-sm text-alert">
+            <Private active={hide}>{item.error}</Private>
+          </span>
         </span>
         <button className={btn} onClick={() => onUndo(item.id)}>
           Edit
@@ -32,7 +35,7 @@ function Row({ item, now, onUndo }: { item: OutboxItem; now: number; onUndo: (id
     return (
       <div role="status" className="flex items-center gap-3">
         <span className="min-w-0 flex-1 truncate">
-          Sending to {to} in <span className="num">{secs}</span>s
+          Sending to <Private active={hide}>{to}</Private> in <span className="num">{secs}</span>s
         </span>
         <button className={btn} onClick={() => onUndo(item.id)}>
           Undo
@@ -43,13 +46,14 @@ function Row({ item, now, onUndo }: { item: OutboxItem; now: number; onUndo: (id
   return (
     <div role="status" className="flex items-center gap-3">
       <span className="min-w-0 flex-1 truncate">
-        {item.state === 'sent' ? `Sent to ${to}` : `Sending to ${to}`}
+        {item.state === 'sent' ? 'Sent to ' : 'Sending to '}
+        <Private active={hide}>{to}</Private>
       </span>
     </div>
   )
 }
 
-export default function OutboxToast({ onEdit }: { onEdit: (draft: Draft) => void }) {
+export default function OutboxToast({ onEdit, hide }: { onEdit: (draft: Draft) => void; hide: boolean }) {
   const qc = useQueryClient()
   const outbox = useOutbox()
   const [now, setNow] = useState(Date.now())
@@ -75,7 +79,7 @@ export default function OutboxToast({ onEdit }: { onEdit: (draft: Draft) => void
   return (
     <div className="fixed bottom-4 left-1/2 z-30 w-[28rem] max-w-[calc(100vw-2rem)] -translate-x-1/2 space-y-3 rounded-md border border-line-strong bg-raised px-4 py-3">
       {items.map((i) => (
-        <Row key={i.id} item={i} now={now} onUndo={(id) => void undo(id)} />
+        <Row key={i.id} item={i} now={now} hide={hide} onUndo={(id) => void undo(id)} />
       ))}
     </div>
   )
