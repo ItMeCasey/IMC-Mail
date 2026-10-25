@@ -7,8 +7,10 @@
     "dev": "pnpm --filter @imc/desktop dev",
     "build": "pnpm --filter @imc/desktop build",
     "typecheck": "pnpm -r typecheck",
-    "test": "pnpm -r test",
-    "format": "prettier --write ."
+    "test": "pnpm -r test && node --test scripts/next-version.test.mjs",
+    "format": "prettier --write .",
+    "version:next": "node scripts/next-version.mjs",
+    "version:set": "node scripts/next-version.mjs --write"
   },
   "devDependencies": {
     "prettier": "^3.9.10",
