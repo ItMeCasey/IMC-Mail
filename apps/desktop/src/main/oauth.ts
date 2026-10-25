@@ -100,6 +100,8 @@ export function waitForAuthCode(o: {
   host: string
   expectedState: string
   buildUrl: (redirectUri: string) => string
+  /** Path to put on the redirect URI; '' for none. Defaults to /callback. */
+  path?: string
   openUrl: (url: string) => void | Promise<void>
   timeoutMs: number
   signal?: AbortSignal
@@ -128,7 +130,8 @@ export function waitForAuthCode(o: {
 
     server.on('request', (req, res) => {
       const url = new URL(req.url ?? '/', 'http://localhost')
-      if (url.pathname !== '/callback') {
+      // Providers that register the redirect without a path send the browser back to "/".
+      if (url.pathname !== '/callback' && url.pathname !== '/') {
         res.writeHead(404).end()
         return
       }
@@ -151,7 +154,7 @@ export function waitForAuthCode(o: {
     })
     server.once('error', (e) => finish(() => reject(e)))
     server.listen(0, o.host, () => {
-      redirectUri = `http://${o.host}:${(server.address() as AddressInfo).port}/callback`
+      redirectUri = `http://${o.host}:${(server.address() as AddressInfo).port}${o.path ?? '/callback'}`
       Promise.resolve(o.openUrl(o.buildUrl(redirectUri))).catch((e) => finish(() => reject(e)))
     })
   })
@@ -230,6 +233,7 @@ export async function signIn(
 
   const { code, redirectUri } = await waitForAuthCode({
     host: def.loopbackHost,
+    path: def.redirectPath,
     expectedState: state,
     timeoutMs: o.timeoutMs ?? 5 * 60_000,
     signal: o.signal,

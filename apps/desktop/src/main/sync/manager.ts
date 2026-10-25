@@ -58,6 +58,22 @@ export class SyncManager {
     return this.get(accountId).loadOlder(folder, count)
   }
 
+  createFolder(accountId: string, parentPath: string | null, name: string) {
+    return this.get(accountId).createFolder(parentPath, name)
+  }
+
+  renameFolder(accountId: string, path: string, newPath: string) {
+    return this.get(accountId).renameFolder(path, newPath)
+  }
+
+  deleteFolder(accountId: string, path: string) {
+    return this.get(accountId).deleteFolder(path)
+  }
+
+  markAllSeen(accountId: string, path: string, seen: boolean) {
+    return this.get(accountId).markAllSeen(path, seen)
+  }
+
   moveByMessageId(accountId: string, path: string, rfcMessageId: string, dest: string) {
     return this.get(accountId).moveByMessageId(path, rfcMessageId, dest)
   }

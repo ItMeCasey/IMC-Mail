@@ -59,3 +59,11 @@ describe('id_token helpers', () => {
     expect(() => decodeJwtPayload('nope')).toThrow()
   })
 })
+
+describe('redirect paths', () => {
+  it('Microsoft uses none (its registration is a bare http://localhost); Google keeps /callback', () => {
+    expect(oauthProviders.microsoft.redirectPath).toBe('')
+    expect(oauthProviders.microsoft.loopbackHost).toBe('localhost')
+    expect(oauthProviders.gmail.redirectPath).toBe('/callback')
+  })
+})

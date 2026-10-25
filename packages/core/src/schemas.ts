@@ -353,6 +353,43 @@ export const undoMoveSchema = z.object({
 })
 export type UndoMove = z.infer<typeof undoMoveSchema>
 
+export const ruleMatchSchema = z.object({
+  from: z.string().max(200).default(''),
+  to: z.string().max(200).default(''),
+  subject: z.string().max(200).default(''),
+  contains: z.string().max(200).default('')
+})
+export const ruleActionsSchema = z.object({
+  /** A label to add. */
+  labelId: z.string().nullable().default(null),
+  /** File it under this category, overriding the automatic one. */
+  category: categorySchema.nullable().default(null),
+  markRead: z.boolean().default(false),
+  star: z.boolean().default(false),
+  /** Move it out of the inbox to Archive. */
+  archive: z.boolean().default(false)
+})
+export const ruleInputSchema = z.object({
+  id: z.string().optional(),
+  name: z.string().trim().min(1).max(60),
+  enabled: z.boolean().default(true),
+  match: ruleMatchSchema,
+  actions: ruleActionsSchema
+})
+export const ruleSchema = ruleInputSchema.extend({ id: z.string() })
+export type Rule = z.infer<typeof ruleSchema>
+export type RuleInput = z.input<typeof ruleInputSchema>
+
+export const mediaKitSchema = z.object({ path: z.string(), filename: z.string(), size: z.number().int() })
+export type MediaKit = z.infer<typeof mediaKitSchema>
+
+export const savedSearchSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  query: z.string()
+})
+export type SavedSearch = z.infer<typeof savedSearchSchema>
+
 export const labelSchema = z.object({
   id: z.string(),
   name: z.string(),

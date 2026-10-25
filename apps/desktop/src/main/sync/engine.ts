@@ -147,6 +147,11 @@ export class AccountSync {
     else this.wake?.()
   }
 
+  /** Progress notes for diagnosing a stuck sync. Off unless IMC_DEBUG_SYNC is set; never includes tokens or mail. */
+  private trace(note: string): void {
+    if (process.env['IMC_DEBUG_SYNC']) console.log(`[sync ${this.account.email}] ${new Date().toISOString().slice(11, 19)} ${note}`)
+  }
+
   private setState(state: 'connecting' | 'syncing' | 'idle' | 'error', error: string | null = null) {
     this.store.setState(this.account.id, state, error)
     this.onChange(this.account.id)
@@ -178,15 +183,18 @@ export class AccountSync {
   private async session(onConnected: () => void): Promise<void> {
     const { config, id } = this.account
     this.setState('connecting')
+    this.trace('getting credentials')
     // Fetched per connection, so a reconnect always starts with a fresh OAuth access token.
     const client = createClient(config.imap, config.username, await this.credentials.get(this.account))
+    this.trace('credentials ready; connecting')
     this.client = client
-    client.on('error', () => {}) // surfaced through 'close' and the failing call
+    client.on('error', (e: Error) => this.trace(`client error: ${describeError(e)}`)) // surfaced through 'close' and the failing call
     const closed = new Promise<void>((resolve) => client.once('close', () => resolve()))
 
     let timer: NodeJS.Timeout | undefined
     try {
       await client.connect()
+      this.trace('connected')
       onConnected()
 
       client.on('exists', (e: { path: string }) => this.schedule(e.path))
@@ -255,6 +263,48 @@ export class AccountSync {
       const uids = await client.search({ header: { 'message-id': rfcMessageId } }, { uid: true })
       if (!uids || uids.length === 0) throw new Error('The message is not in that folder any more')
       await client.messageMove(uids, dest, { uid: true })
+    } finally {
+      lock.release()
+    }
+  }
+
+  /** Creates a folder, top level or inside `parentPath`, using the server's own separator. Returns its path. */
+  async createFolder(parentPath: string | null, name: string): Promise<string> {
+    const client = this.client
+    if (!client?.usable) throw new Error('Offline: reconnect to create a folder')
+    const listed = await client.list()
+    const delimiter = (parentPath ? listed.find((b) => b.path === parentPath)?.delimiter : listed[0]?.delimiter) ?? '/'
+    const path = parentPath ? `${parentPath}${delimiter}${name}` : name
+    await client.mailboxCreate(path)
+    this.schedule('*')
+    return path
+  }
+
+  /** Renames a folder (and, on the server, the folders inside it). */
+  async renameFolder(path: string, newPath: string): Promise<void> {
+    const client = this.client
+    if (!client?.usable) throw new Error('Offline: reconnect to rename a folder')
+    await client.mailboxRename(path, newPath)
+    this.schedule('*')
+  }
+
+  /** Deletes a folder and everything in it from the server. */
+  async deleteFolder(path: string): Promise<void> {
+    const client = this.client
+    if (!client?.usable) throw new Error('Offline: reconnect to delete a folder')
+    await client.mailboxDelete(path)
+    this.schedule('*')
+  }
+
+  /** Sets or clears the Seen flag on every message in a folder, including ones this app has not downloaded. */
+  async markAllSeen(path: string, seen: boolean): Promise<void> {
+    const client = this.client
+    if (!client?.usable) throw new Error('Offline: reconnect to change these messages')
+    const lock = await client.getMailboxLock(path)
+    try {
+      if (!client.mailbox || client.mailbox.exists === 0) return
+      if (seen) await client.messageFlagsAdd('1:*', ['\\Seen'])
+      else await client.messageFlagsRemove('1:*', ['\\Seen'])
     } finally {
       lock.release()
     }
@@ -331,7 +381,9 @@ export class AccountSync {
   }
 
   private async syncAll(client: ImapFlow): Promise<void> {
+    this.trace('listing folders')
     const listed = await client.list()
+    this.trace(`${listed.length} folders`)
     const selectable = listed.filter(
       (b) => !b.flags.has('\\Noselect') && !b.flags.has('\\NonExistent')
     )
@@ -391,7 +443,9 @@ export class AccountSync {
   }
 
   private async syncFolder(client: ImapFlow, folder: FolderRef): Promise<void> {
+    this.trace(`syncing ${folder.path}`)
     const lock = await client.getMailboxLock(folder.path)
+    this.trace(`opened ${folder.path} (${client.mailbox ? client.mailbox.exists : '?'} messages)`)
     try {
       const mb = client.mailbox
       if (!mb) return

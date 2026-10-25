@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { canPreviewAttachment as canPreview } from '@imc/core'
-import { previewOf, sniffImage } from './preview'
+import { looksLikePdf, previewOf, sniffImage } from './preview'
 
 const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(10)])
 
@@ -30,5 +30,13 @@ describe('attachment preview', () => {
     expect(canPreview('image/svg+xml', 'a.svg')).toBe(false)
     expect(canPreview('application/octet-stream', 'script.srt')).toBe(true)
     expect(canPreview('application/pdf', 'a.pdf')).toBe(false)
+  })
+})
+
+describe('PDF check', () => {
+  it('accepts real PDFs and refuses anything else called .pdf', () => {
+    expect(looksLikePdf(Buffer.from('%PDF-1.7\n1 0 obj'))).toBe(true)
+    expect(looksLikePdf(Buffer.from('MZ this is an exe'))).toBe(false)
+    expect(looksLikePdf(Buffer.from('%PDF'))).toBe(false)
   })
 })

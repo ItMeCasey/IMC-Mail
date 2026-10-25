@@ -1,9 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query'
-import { CATEGORY_LABELS, type Draft, type MessageAction, type ReplyMode, type UndoMove } from '@imc/core'
+import { CATEGORY_LABELS, type Draft, type Folder, type MessageAction, type ReplyMode, type UndoMove } from '@imc/core'
 import Agenda from './Agenda'
 import DealsBoard from './DealsBoard'
 import ScheduledDialog from './ScheduledDialog'
+import CommandPalette, { type Command } from './CommandPalette'
+import { askConfirm, DialogHost } from './dialogs'
+import WindowFrame from './WindowFrame'
+import type { BulkAction } from './BulkBar'
+import RulesDialog from './RulesDialog'
+import FolderNameDialog from './FolderNameDialog'
+import SettingsDialog from './SettingsDialog'
 import NotificationSettingsDialog from './NotificationSettings'
 import AddAccount from './AddAccount'
 import Composer, { signatureHtml } from './Composer'
@@ -21,6 +28,7 @@ import {
   useDrafts,
   useOutbox,
   useLabels,
+  useSavedSearches,
   useViewCounts,
   useFolders,
   useMessages,
@@ -47,12 +55,20 @@ function Shell() {
   const [board, setBoard] = useState(false)
   const [calendar, setCalendar] = useState(false)
   const [notifOpen, setNotifOpen] = useState(false)
+  const [rulesOpen, setRulesOpen] = useState(false)
+  const [newFolder, setNewFolder] = useState<{ accountId: string; parent: Folder | null } | null>(null)
+  const [renaming, setRenaming] = useState<Folder | null>(null)
+  const [checked, setChecked] = useState<Set<string>>(new Set())
+  const anchor = useRef<string | null>(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [paletteOpen, setPaletteOpen] = useState(false)
   const [undo, setUndo] = useState<UndoMove | null>(null)
   const [scheduledOpen, setScheduledOpen] = useState(false)
   const outbox = useOutbox()
   const [focusDeal, setFocusDeal] = useState<string | null>(null)
   const counts = useViewCounts()
   const labels = useLabels()
+  const searches = useSavedSearches()
   const deals = useDeals()
   const stream = useStreamSafe()
   const hide = stream.active
@@ -107,6 +123,13 @@ function Shell() {
     []
   )
 
+  // The gear in the title bar (outside this component) asks for the settings panel.
+  useEffect(() => {
+    const open = () => setSettingsOpen(true)
+    window.addEventListener('imc:open-settings', open)
+    return () => window.removeEventListener('imc:open-settings', open)
+  }, [])
+
   // Close anything that shows private content the moment the mode turns on.
   useEffect(() => {
     if (hide) {
@@ -130,12 +153,17 @@ function Shell() {
       .catch(() => markedRead.current.delete(sel.id)) // offline: try again on the next open
   }, [thread.data, qc, hide])
 
-  // "/" or Ctrl+K jumps to the search box from anywhere.
+  // "/" jumps to the search box from anywhere; Ctrl+K opens the command palette.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null
       const typing = !!t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)
-      if ((e.key === '/' && !typing && !e.ctrlKey && !e.metaKey) || ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k')) {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setPaletteOpen((v) => !v)
+        return
+      }
+      if (e.key === '/' && !typing && !e.ctrlKey && !e.metaKey) {
         const box = document.getElementById('search-input') as HTMLInputElement | null
         if (box) {
           e.preventDefault()
@@ -151,11 +179,12 @@ function Shell() {
   // Escape closes the reading pane, unless a dialog is up.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && openId && !adding && !composer && !draftsOpen) setOpenId(null)
+      if (e.key === 'Escape' && checked.size > 0) setChecked(new Set())
+      else if (e.key === 'Escape' && openId && !adding && !composer && !draftsOpen) setOpenId(null)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [openId, adding, composer, draftsOpen])
+  }, [openId, adding, composer, draftsOpen, checked])
 
   const openComposer = (seed: Draft) => setComposer({ key: Date.now(), seed })
 
@@ -209,7 +238,7 @@ function Shell() {
     if (!openId || hide) return
     if (
       action === 'deleteForever' &&
-      !confirm('Delete this message permanently? This cannot be undone.')
+      !(await askConfirm({ title: 'Delete this message?', message: 'It will be deleted for good. This cannot be undone.', confirmLabel: 'Delete forever', danger: true }))
     ) {
       return
     }
@@ -231,6 +260,138 @@ function Shell() {
           ''
         )
       )
+    } finally {
+      await qc.invalidateQueries()
+    }
+  }
+
+  /** Marks every message in an account's Inbox read or unread, after asking. */
+  const markAll = async (accountId: string, seen: boolean) => {
+    if (hide) return blocked()
+    const a = accounts.data?.find((x) => x.id === accountId)
+    const who = a?.displayName || a?.email || 'this account'
+    if (!(await askConfirm({ title: `Mark everything ${seen ? 'read' : 'unread'}?`, message: `Every message in the Inbox of ${who} will be marked ${seen ? 'read' : 'unread'}, on the mail server too.`, confirmLabel: seen ? 'Mark all read' : 'Mark all unread' }))) return
+    try {
+      await window.imc.invoke('accounts:markAll', { id: accountId, seen })
+    } catch (e) {
+      setComposeError((e instanceof Error ? e.message : String(e)).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''))
+    } finally {
+      await qc.invalidateQueries()
+    }
+  }
+
+  /** Deletes a folder from the server after spelling out what that does. */
+  const deleteFolder = async (f: Folder) => {
+    if (hide) return blocked()
+    const what =
+      f.total > 0
+        ? `It holds ${f.total} cached ${f.total === 1 ? 'message' : 'messages'} (the server may hold more), and they will be deleted too.`
+        : 'Any messages in it will be deleted too.'
+    if (!(await askConfirm({ title: `Delete the folder "${f.name}"?`, message: `${what} This cannot be undone.`, confirmLabel: 'Delete folder', danger: true }))) return
+    try {
+      await window.imc.invoke('folders:delete', { folderId: f.id })
+      if (selection.folderId === f.id) select({})
+    } catch (e) {
+      setComposeError((e instanceof Error ? e.message : String(e)).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''))
+    } finally {
+      await qc.invalidateQueries()
+    }
+  }
+
+  /** A click on a list row: plain opens it, Ctrl ticks it, Shift ticks everything from the last click. */
+  const clickRow = (id: string, keys: { ctrl: boolean; shift: boolean }) => {
+    const list = listData ?? []
+    if (keys.shift && anchor.current) {
+      const a = list.findIndex((m) => m.id === anchor.current)
+      const b = list.findIndex((m) => m.id === id)
+      if (a >= 0 && b >= 0) {
+        const [lo, hi] = a < b ? [a, b] : [b, a]
+        setChecked(new Set(list.slice(lo, hi + 1).map((m) => m.id)))
+        return
+      }
+    }
+    if (keys.ctrl) {
+      setChecked((c) => {
+        const next = new Set(c)
+        // The open message counts as ticked when you start ticking others.
+        if (next.size === 0 && openId && openId !== id) next.add(openId)
+        if (!next.delete(id)) next.add(id)
+        return next
+      })
+      anchor.current = id
+      return
+    }
+    anchor.current = id
+    setChecked(new Set())
+    setComposer(null)
+    setOpenId(id)
+  }
+
+  /** Archive, trash, junk or mark every ticked message. Failures are counted, not fatal. */
+  const bulk = async (action: BulkAction) => {
+    if (hide || checked.size === 0) return
+    const ids = [...checked]
+    setChecked(new Set())
+    const list = listData ?? []
+    const leaving = action === 'archive' || action === 'trash' || action === 'junk'
+    if (leaving) {
+      qc.setQueryData<typeof list>(listKey, (old) => old?.filter((m) => !ids.includes(m.id)))
+      if (openId && ids.includes(openId)) setOpenId(null)
+    }
+    let failed = 0
+    let why = ''
+    for (const id of ids) {
+      try {
+        if (leaving) await window.imc.invoke('messages:act', { id, action })
+        else await window.imc.invoke('messages:setFlags', { id, seen: action === 'read' })
+      } catch (e) {
+        failed++
+        why = (e instanceof Error ? e.message : String(e)).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
+      }
+    }
+    if (failed > 0) setComposeError(`${failed} of ${ids.length} could not be changed: ${why}`)
+    await qc.invalidateQueries()
+  }
+
+  /** Moves messages dropped on a folder; only those from that folder's own account can go. */
+  const moveMany = async (idsText: string, folderId: string) => {
+    const ids = idsText.split(',').filter(Boolean)
+    if (ids.length <= 1) return void moveMessage(ids[0] ?? '', folderId)
+    if (hide) return
+    const target = folders.data?.find((f) => f.id === folderId)
+    const list = listData ?? []
+    const ok = ids.filter((id) => list.find((m) => m.id === id)?.accountId === target?.accountId)
+    setChecked(new Set())
+    qc.setQueryData<typeof list>(listKey, (old) => old?.filter((m) => !ok.includes(m.id)))
+    if (openId && ok.includes(openId)) setOpenId(null)
+    let failed = ids.length - ok.length
+    let why = failed > 0 ? 'messages from other accounts stay where they are' : ''
+    for (const id of ok) {
+      try {
+        await window.imc.invoke('messages:act', { id, action: 'move', folderId })
+      } catch (e) {
+        failed++
+        why = (e instanceof Error ? e.message : String(e)).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
+      }
+    }
+    if (failed > 0) setComposeError(`${failed} of ${ids.length} not moved: ${why}`)
+    await qc.invalidateQueries()
+  }
+
+  /** Moves a message dropped on a folder, with the same undo as the toolbar buttons. */
+  const moveMessage = async (id: string, folderId: string) => {
+    if (hide) return
+    const list = listData ?? []
+    const i = list.findIndex((m) => m.id === id)
+    const next = id === openId ? (list[i + 1] ?? list[i - 1] ?? null) : null
+    qc.setQueryData<typeof list>(listKey, (old) => old?.filter((m) => m.id !== id))
+    if (id === openId) setOpenId(next?.id ?? null)
+    try {
+      const r = await window.imc.invoke('messages:act', { id, action: 'move', folderId })
+      setUndo(r.undo)
+    } catch (e) {
+      if (id === openId) setOpenId(id)
+      setComposeError((e instanceof Error ? e.message : String(e)).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''))
     } finally {
       await qc.invalidateQueries()
     }
@@ -298,7 +459,23 @@ function Shell() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openId, composer, adding, draftsOpen, hide, listData, folders.data, selection, debounced])
 
+  const openBoard = () => {
+    setOpenId(null)
+    setComposer(null)
+    setQuery('')
+    setCalendar(false)
+    setBoard(true)
+  }
+  const openCalendar = () => {
+    setOpenId(null)
+    setComposer(null)
+    setQuery('')
+    setBoard(false)
+    setCalendar(true)
+  }
+
   const select = (s: Selection) => {
+    setChecked(new Set())
     setQuery('')
     setBoard(false)
     setCalendar(false)
@@ -326,6 +503,56 @@ function Shell() {
     await qc.invalidateQueries()
   }
 
+  /** What the palette offers. Names of accounts, folders, labels and searches stay out while stream-safe mode is on. */
+  const commands: Command[] = [
+    { id: 'compose', label: 'Compose a new message', group: 'Action', run: newMessage },
+    { id: 'settings', label: 'Open settings', group: 'Action', run: () => setSettingsOpen(true) },
+    { id: 'add', label: 'Add an account', group: 'Action', run: () => (hide ? blocked() : setAdding(true)) },
+    { id: 'rules', label: 'Open rules', group: 'Action', run: () => (hide ? blocked() : setRulesOpen(true)) },
+    { id: 'notif', label: 'Notification settings', group: 'Action', run: () => setNotifOpen(true) },
+    { id: 'drafts', label: 'Open drafts', group: 'Action', run: () => (hide ? blocked() : setDraftsOpen(true)) },
+    { id: 'sched', label: 'Scheduled messages', group: 'Action', run: () => (hide ? blocked() : setScheduledOpen(true)) },
+    { id: 'kit', label: 'Choose a new media kit file', group: 'Action', run: () => void window.imc.invoke('mediaKit:choose').then(() => qc.invalidateQueries({ queryKey: ['mediakit'] })) },
+    { id: 'search', label: 'Search mail', group: 'Action', run: () => document.getElementById('search-input')?.focus() },
+    {
+      id: 'ss',
+      label: stream.active ? 'Turn stream-safe mode off' : 'Turn stream-safe mode on',
+      group: 'Action',
+      run: () =>
+        void window.imc
+          .invoke('streamsafe:set', { mode: stream.active ? 'off' : 'on' })
+          .then((s) => qc.setQueryData(['streamsafe'], s))
+    },
+    { id: 'g-all', label: 'All inboxes', group: 'Go to', run: () => select({}) },
+    { id: 'g-needs', label: 'Needs reply', group: 'Go to', run: () => select({ view: 'needsReply' }) },
+    { id: 'g-wait', label: 'Waiting on reply', group: 'Go to', run: () => select({ view: 'waiting' }) },
+    { id: 'g-fu', label: 'Follow-ups', group: 'Go to', run: () => select({ view: 'followUp' }) },
+    { id: 'g-snz', label: 'Snoozed', group: 'Go to', run: () => select({ view: 'snoozed' }) },
+    { id: 'g-sus', label: 'Suspicious mail', group: 'Go to', run: () => select({ view: 'suspicious' }) },
+    { id: 'g-cal', label: 'Calendar', group: 'Go to', run: () => (hide ? blocked() : openCalendar()) },
+    { id: 'g-board', label: 'Sponsorship board', group: 'Go to', run: () => (hide ? blocked() : openBoard()) },
+    ...(hide
+      ? []
+      : [
+          ...(folders.data ?? []).map((f) => ({
+            id: 'f-' + f.id,
+            label: `${accounts.data?.find((a) => a.id === f.accountId)?.displayName || accounts.data?.find((a) => a.id === f.accountId)?.email || ''} · ${f.name}`,
+            group: 'Folder',
+            run: () => select({ accountId: f.accountId, folderId: f.id })
+          })),
+          ...(labels.data ?? []).map((l) => ({ id: 'l-' + l.id, label: l.name, group: 'Label', run: () => select({ labelId: l.id }) })),
+          ...(searches.data ?? []).map((q) => ({
+            id: 's-' + q.id,
+            label: q.name,
+            group: 'Saved search',
+            run: () => {
+              select({})
+              setQuery(q.query)
+            }
+          }))
+        ])
+  ]
+
   return (
     <div className="flex h-full">
       <Sidebar
@@ -333,35 +560,35 @@ function Shell() {
         folders={folders.data ?? []}
         selection={selection}
         onSelect={select}
-        onAdd={() => (hide ? blocked() : setAdding(true))}
         onCompose={newMessage}
         onDrafts={() => (hide ? blocked() : setDraftsOpen(true))}
         streamSafe={stream}
         counts={counts.data}
         labels={labels.data ?? []}
+        searches={searches.data ?? []}
+        onRunSearch={(q) => {
+          setBoard(false)
+          setCalendar(false)
+          setOpenId(null)
+          setQuery(q)
+        }}
+        onDeleteSearch={(id) =>
+          void window.imc.invoke('searches:delete', { id }).then(() => qc.invalidateQueries({ queryKey: ['searches'] }))
+        }
         dealCount={(deals.data ?? []).filter((d) => ['lead', 'negotiating', 'contracted'].includes(d.stage)).length}
         boardActive={board}
         calendarActive={calendar}
-        onCalendar={() => {
-          setOpenId(null)
-          setComposer(null)
-          setQuery('')
-          setBoard(false)
-          setCalendar(true)
-        }}
-        onNotifications={() => setNotifOpen(true)}
-        onBoard={() => {
-          setOpenId(null)
-          setComposer(null)
-          setQuery('')
-          setCalendar(false)
-          setBoard(true)
-        }}
+        onCalendar={openCalendar}
+        onBoard={openBoard}
         draftCount={drafts.data?.length ?? 0}
         scheduledCount={(outbox.data ?? []).filter((i) => i.scheduled && i.state === 'queued').length}
         onScheduled={() => (hide ? blocked() : setScheduledOpen(true))}
-        onRemove={remove}
         onResync={(id) => void window.imc.invoke('accounts:resync', { id })}
+        onMarkAll={(id, seen) => void markAll(id, seen)}
+        onAddFolder={(accountId, parent) => (hide ? blocked() : setNewFolder({ accountId, parent }))}
+        onDeleteFolder={(f) => void deleteFolder(f)}
+        onRenameFolder={(f) => (hide ? blocked() : setRenaming(f))}
+        onDropMessage={(ids, folderId) => void moveMany(ids, folderId)}
       />
       {board &&
         (hide ? (
@@ -403,9 +630,16 @@ function Shell() {
         accounts={accounts.data ?? []}
         loading={listLoading}
         hide={hide}
+        onSaveSearch={(name) =>
+          void window.imc.invoke('searches:save', { name, query }).then(() => qc.invalidateQueries({ queryKey: ['searches'] }))
+        }
         footer={!searching && selection.folderId && !hide ? <LoadOlder key={selection.folderId} folderId={selection.folderId} onError={setComposeError} /> : null}
         selectedId={openId}
         forceCompact={composer !== null}
+        checked={checked}
+        onRowClick={clickRow}
+        onBulk={(a) => void bulk(a)}
+        onClearChecked={() => setChecked(new Set())}
         onSelect={(id) => {
           setComposer(null)
           setOpenId(id)
@@ -456,6 +690,7 @@ function Shell() {
           onOpen={(id) => void openDraft(id)}
         />
       )}
+      <DialogHost />
       <OutboxToast onEdit={openComposer} hide={hide} />
       {undo && !hide && (
         <UndoToast
@@ -468,6 +703,59 @@ function Shell() {
       {scheduledOpen && (
         <ScheduledDialog onEdit={openComposer} onClose={() => setScheduledOpen(false)} />
       )}
+      {paletteOpen && <CommandPalette commands={commands} onClose={() => setPaletteOpen(false)} />}
+      {newFolder && !hide && (
+        <FolderNameDialog
+          title={newFolder.parent ? 'New subfolder' : 'New folder'}
+          where={
+            newFolder.parent
+              ? `Inside "${newFolder.parent.name}"`
+              : `In ${accounts.data?.find((a) => a.id === newFolder.accountId)?.displayName || accounts.data?.find((a) => a.id === newFolder.accountId)?.email || 'this account'}`
+          }
+          onCreate={async (name) => {
+            await window.imc.invoke('folders:create', { accountId: newFolder.accountId, parentId: newFolder.parent?.id, name })
+            await qc.invalidateQueries()
+          }}
+          onClose={() => setNewFolder(null)}
+        />
+      )}
+      {renaming && !hide && (
+        <FolderNameDialog
+          title="Rename folder"
+          where="Mail inside it stays where it is."
+          initial={renaming.name}
+          confirmLabel="Rename"
+          busyLabel="Renaming…"
+          onCreate={async (name) => {
+            await window.imc.invoke('folders:rename', { folderId: renaming.id, name })
+            if (selection.folderId === renaming.id) select({})
+            await qc.invalidateQueries()
+          }}
+          onClose={() => setRenaming(null)}
+        />
+      )}
+      {settingsOpen && (
+        <SettingsDialog
+          streamSafe={stream}
+          accounts={accounts.data ?? []}
+          onRename={(id, displayName) =>
+            void window.imc.invoke('accounts:rename', { id, displayName }).then(() => qc.invalidateQueries({ queryKey: ['accounts'] }))
+          }
+          onRemove={(a) =>
+            void askConfirm({
+              title: 'Remove this account?',
+              message: `${a.email} and its cached mail are removed from this computer. Nothing is deleted on the mail server.`,
+              confirmLabel: 'Remove account',
+              danger: true
+            }).then((ok) => (ok ? remove(a.id) : undefined))
+          }
+          onAddAccount={() => (hide ? blocked() : setAdding(true))}
+          onRules={() => (hide ? blocked() : setRulesOpen(true))}
+          onNotifications={() => setNotifOpen(true)}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
+      {rulesOpen && !hide && <RulesDialog onClose={() => setRulesOpen(false)} />}
       {notifOpen && <NotificationSettingsDialog onClose={() => setNotifOpen(false)} />}
       {adding && <AddAccount onClose={() => setAdding(false)} />}
     </div>
@@ -477,7 +765,9 @@ function Shell() {
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <Shell />
+      <WindowFrame>
+        <Shell />
+      </WindowFrame>
     </QueryClientProvider>
   )
 }

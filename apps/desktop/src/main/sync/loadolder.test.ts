@@ -50,6 +50,51 @@ describe('load older mail', () => {
     expect(changed).toHaveBeenCalled()
   })
 
+  it('marks everything on the server read or unread, using the whole mailbox', async () => {
+    const { sync, inbox } = setup()
+    const add = vi.fn(async () => true)
+    const remove = vi.fn(async () => true)
+    ;(sync as unknown as { client: unknown }).client = {
+      usable: true,
+      mailbox: { exists: 5 },
+      getMailboxLock: async () => ({ release: vi.fn() }),
+      messageFlagsAdd: add,
+      messageFlagsRemove: remove
+    }
+    await sync.markAllSeen('INBOX', true)
+    expect(add).toHaveBeenCalledWith('1:*', ['\\Seen'])
+    await sync.markAllSeen('INBOX', false)
+    expect(remove).toHaveBeenCalledWith('1:*', ['\\Seen'])
+    ;(sync as unknown as { client: { mailbox: { exists: number } } }).client.mailbox.exists = 0
+    await sync.markAllSeen('INBOX', true) // an empty mailbox has nothing to mark, and 1:* would be an error
+    expect(add).toHaveBeenCalledTimes(1)
+    void inbox
+  })
+
+  it('creates folders with the separator the server uses, and deletes them', async () => {
+    const { sync } = setup()
+    const create = vi.fn(async (_path: string) => ({}))
+    const del = vi.fn(async (_path: string) => ({}))
+    const list = vi.fn(async () => [{ path: 'INBOX', delimiter: '/' }, { path: 'Work', delimiter: '.' }])
+    ;(sync as unknown as { client: unknown }).client = { usable: true, list, mailboxCreate: create, mailboxDelete: del }
+    expect(await sync.createFolder(null, 'Brands')).toBe('Brands')
+    expect(await sync.createFolder('INBOX', 'Rent')).toBe('INBOX/Rent')
+    expect(await sync.createFolder('Work', 'Sub')).toBe('Work.Sub')
+    expect(create.mock.calls.map((c) => c[0])).toEqual(['Brands', 'INBOX/Rent', 'Work.Sub'])
+    await sync.deleteFolder('INBOX/Rent')
+    expect(del).toHaveBeenCalledWith('INBOX/Rent')
+  })
+
+  it('renames a folder on the server, and says so when offline', async () => {
+    const { sync } = setup()
+    const rename = vi.fn(async (_from: string, _to: string) => ({}))
+    ;(sync as unknown as { client: unknown }).client = { usable: true, mailboxRename: rename }
+    await sync.renameFolder('INBOX/Rent', 'INBOX/Housing')
+    expect(rename).toHaveBeenCalledWith('INBOX/Rent', 'INBOX/Housing')
+    ;(sync as unknown as { client: unknown }).client = { usable: false }
+    await expect(sync.renameFolder('a', 'b')).rejects.toThrow(/Offline/)
+  })
+
   it('says so when offline', async () => {
     const { sync, inbox } = setup()
     ;(sync as unknown as { client: unknown }).client = { usable: false }

@@ -8,6 +8,7 @@
  *   has:attachment          downloaded messages with a real attachment
  *   account:work            account email or name contains "work"
  *   in:inbox|sent|trash|... folder role or folder name
+ *   label:taxes             messages carrying a label whose name contains "taxes"
  *   before:YYYY-MM-DD after:YYYY-MM-DD
  */
 
@@ -23,6 +24,7 @@ export interface ParsedQuery {
   /** Epoch ms, local midnight, inclusive lower bound. */
   after: number | null
   category: string[]
+  label: string[]
 }
 
 const FIELD: Record<string, string> = { from: 'sender', to: 'recipients', subject: 'subject' }
@@ -60,7 +62,8 @@ export function parseQuery(q: string): ParsedQuery {
     inFolder: [],
     before: null,
     after: null,
-    category: []
+    category: [],
+    label: []
   }
   const positive: string[] = []
   const negative: string[] = []
@@ -88,6 +91,10 @@ export function parseQuery(q: string): ParsedQuery {
       }
       if (key === 'account') {
         if (value) out.account.push(value.toLowerCase())
+        continue
+      }
+      if (key === 'label' || key === 'tag') {
+        if (value) out.label.push(value.toLowerCase())
         continue
       }
       if (key === 'in') {
@@ -169,6 +176,13 @@ export function buildSearch(p: ParsedQuery, limit = SEARCH_LIMIT): BuiltSearch {
   } else {
     where.push("(fo.role IS NULL OR fo.role NOT IN ('trash', 'junk'))")
   }
+  p.label.forEach((l, i) => {
+    where.push(
+      `EXISTS (SELECT 1 FROM message_label ml JOIN label lb ON lb.id = ml.label_id
+                WHERE ml.account_id = m.account_id AND ml.rfc_id = m.message_id AND lower(lb.name) LIKE @lab${i})`
+    )
+    params[`lab${i}`] = `%${l}%`
+  })
   p.category.forEach((c, i) => {
     where.push(`COALESCE(m.category_manual, m.category, 'other') LIKE @cat${i}`)
     params[`cat${i}`] = `${c}%`

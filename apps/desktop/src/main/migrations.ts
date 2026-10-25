@@ -250,5 +250,23 @@ export const migrations: readonly string[] = [
     created_at INTEGER NOT NULL,
     PRIMARY KEY (account_id, rfc_id)
   );
+  `,
+  `
+  CREATE TABLE saved_search (
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    query      TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+  `,
+  `
+  CREATE TABLE rule (
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    enabled    INTEGER NOT NULL DEFAULT 1,
+    match      TEXT NOT NULL,
+    actions    TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  );
   `
 ]

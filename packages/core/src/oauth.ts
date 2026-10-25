@@ -10,6 +10,11 @@ export interface OAuthProviderDef {
   scopes: string[]
   /** Host used in the loopback redirect URI; each provider only accepts its own spelling. */
   loopbackHost: '127.0.0.1' | 'localhost'
+  /**
+   * Path on the loopback redirect URI. Microsoft ignores the port but compares the path, and the
+   * registration is `http://localhost` with none, so it must be empty there. Google takes any path.
+   */
+  redirectPath: '/callback' | ''
   /** Extra query params on the authorize request (offline access, consent behaviour). */
   authParams: Record<string, string>
   /** Google "Desktop app" clients still require a (non-secret) client secret on the token call. */
@@ -26,6 +31,7 @@ export const oauthProviders: Record<OAuthProviderId, OAuthProviderDef> = {
     tokenUrl: 'https://oauth2.googleapis.com/token',
     scopes: ['https://mail.google.com/', 'openid', 'email', 'profile'],
     loopbackHost: '127.0.0.1',
+    redirectPath: '/callback',
     authParams: { access_type: 'offline', prompt: 'consent' },
     usesClientSecret: true,
     imap: { host: 'imap.gmail.com', port: 993, security: 'tls' },
@@ -45,6 +51,7 @@ export const oauthProviders: Record<OAuthProviderId, OAuthProviderDef> = {
       'profile'
     ],
     loopbackHost: 'localhost',
+    redirectPath: '',
     authParams: { prompt: 'select_account' },
     usesClientSecret: false,
     imap: { host: 'outlook.office365.com', port: 993, security: 'tls' },

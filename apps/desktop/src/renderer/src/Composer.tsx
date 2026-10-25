@@ -1,3 +1,4 @@
+import { askConfirm, askText } from './dialogs'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { EditorContent, useEditor } from '@tiptap/react'
@@ -5,6 +6,7 @@ import StarterKit from '@tiptap/starter-kit'
 import { Placeholder } from '@tiptap/extensions'
 import {
   Bold,
+  FileText,
   Italic,
   Link2,
   List,
@@ -26,6 +28,7 @@ import {
   type DraftAttachment,
   type Template
 } from '@imc/core'
+import { useMediaKit } from './hooks'
 import { ScheduleMenu, TemplatesMenu } from './ComposerMenus'
 import RecipientInput, { isValidRecipient } from './RecipientInput'
 import { tapeColor } from './tape'
@@ -162,6 +165,16 @@ export default function Composer({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [accountId, to, cc, bcc, subject, html, attachments])
 
+  const mediaKit = useMediaKit()
+  const attachKit = async () => {
+    let kit = mediaKit.data ?? null
+    if (!kit) {
+      kit = await window.imc.invoke('mediaKit:choose')
+      void qc.invalidateQueries({ queryKey: ['mediakit'] })
+    }
+    if (kit && !attachments.some((a) => a.path === kit!.path)) await attach([kit.path])
+  }
+
   const attach = async (paths?: string[]) => {
     try {
       const files = await window.imc.invoke('compose:attach', { paths })
@@ -179,7 +192,12 @@ export default function Composer({
     const left = placeholdersIn(`${subject} ${editor?.getText() ?? ''}`)
     if (
       left.length > 0 &&
-      !confirm(`This message still has ${left.map((v) => '{{' + v + '}}').join(', ')} to fill in. Send anyway?`)
+      !(await askConfirm({
+        title: 'Send with blanks?',
+        message: `This message still has ${left.map((v) => '{{' + v + '}}').join(', ')} to fill in. They would go out as written.`,
+        confirmLabel: 'Send anyway',
+        cancelLabel: 'Keep editing'
+      }))
     ) {
       return
     }
@@ -198,7 +216,7 @@ export default function Composer({
   }
 
   const discard = async () => {
-    if (!isEmpty && !confirm('Discard this message?')) return
+    if (!isEmpty && !(await askConfirm({ title: 'Discard this message?', message: 'What you have written will be thrown away.', confirmLabel: 'Discard', cancelLabel: 'Keep editing', danger: true }))) return
     if (draftId) await window.imc.invoke('compose:discardDraft', { id: draftId })
     void qc.invalidateQueries({ queryKey: ['drafts'] })
     onClose()
@@ -209,10 +227,17 @@ export default function Composer({
     onClose()
   }
 
-  const setLink = () => {
+  const setLink = async () => {
     if (!editor) return
     const prev = editor.getAttributes('link')['href'] as string | undefined
-    const url = window.prompt('Link address', prev ?? 'https://')
+    const url = await askText({
+      title: prev ? 'Edit link' : 'Add a link',
+      message: prev ? 'Leave it empty to remove the link.' : undefined,
+      label: 'Link address',
+      initial: prev ?? 'https://',
+      confirmLabel: 'Apply',
+      allowEmpty: true
+    })
     if (url === null) return
     if (url === '') editor.chain().focus().extendMarkRange('link').unsetLink().run()
     else editor.chain().focus().extendMarkRange('link').setLink({ href: url }).run()
@@ -246,12 +271,12 @@ export default function Composer({
   }
 
   const saveAsTemplate = async () => {
-    const name = window.prompt('Name this template', subject.trim() || 'New template')?.trim()
+    const name = (await askText({ title: 'Save as template', label: 'Template name', initial: subject.trim() || 'New template', confirmLabel: 'Save template' }))?.trim()
     if (!name) return
     const existing = (await window.imc.invoke('templates:list')).find(
       (t) => t.name.toLowerCase() === name.toLowerCase()
     )
-    if (existing && !confirm(`Replace the existing template "${existing.name}"?`)) return
+    if (existing && !(await askConfirm({ title: `Replace "${existing.name}"?`, message: 'A template with that name already exists. Its text and attachments will be replaced.', confirmLabel: 'Replace' }))) return
     try {
       await window.imc.invoke('templates:save', {
         id: existing?.id,
@@ -367,12 +392,17 @@ export default function Composer({
         <ToolButton label="Bulleted list" Icon={List} active={editor?.isActive('bulletList')} onClick={() => editor?.chain().focus().toggleBulletList().run()} />
         <ToolButton label="Numbered list" Icon={ListOrdered} active={editor?.isActive('orderedList')} onClick={() => editor?.chain().focus().toggleOrderedList().run()} />
         <ToolButton label="Quote" Icon={Quote} active={editor?.isActive('blockquote')} onClick={() => editor?.chain().focus().toggleBlockquote().run()} />
-        <ToolButton label="Link" Icon={Link2} active={editor?.isActive('link')} onClick={setLink} />
+        <ToolButton label="Link" Icon={Link2} active={editor?.isActive("link")} onClick={() => void setLink()} />
         <span className="mx-1 h-5 w-px bg-line" aria-hidden />
         <ToolButton label="Undo" Icon={Undo2} disabled={!editor?.can().undo()} onClick={() => editor?.chain().focus().undo().run()} />
         <ToolButton label="Redo" Icon={Redo2} disabled={!editor?.can().redo()} onClick={() => editor?.chain().focus().redo().run()} />
         <span className="mx-1 h-5 w-px bg-line" aria-hidden />
         <ToolButton label="Attach files" Icon={Paperclip} onClick={() => void attach()} />
+        <ToolButton
+          label={mediaKit.data ? `Attach media kit (${mediaKit.data.filename})` : 'Choose and attach your media kit'}
+          Icon={FileText}
+          onClick={() => void attachKit()}
+        />
         <TemplatesMenu onPick={applyTemplate} onSaveAs={() => void saveAsTemplate()} />
       </div>
 

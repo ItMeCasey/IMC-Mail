@@ -10,6 +10,10 @@ import {
   dealSchema,
   attachmentPreviewSchema,
   labelSchema,
+  savedSearchSchema,
+  mediaKitSchema,
+  ruleInputSchema,
+  ruleSchema,
   undoMoveSchema,
   viewCountsSchema,
   contactSchema,
@@ -84,6 +88,26 @@ export const ipcContract = {
   'accounts:remove': {
     input: z.object({ id: z.string() }),
     output: z.undefined()
+  },
+  /** Creates a folder on the mail server. With parentId it goes inside that folder. */
+  'folders:create': {
+    input: z.object({ accountId: z.string(), parentId: z.string().optional(), name: z.string().max(200) }),
+    output: z.object({ folderId: z.string() })
+  },
+  /** Renames a folder on the mail server, keeping it inside the same parent. Standard folders are refused. */
+  'folders:rename': {
+    input: z.object({ folderId: z.string(), name: z.string().max(200) }),
+    output: z.undefined()
+  },
+  /** Deletes a folder from the mail server, and the messages in it. Standard folders and folders with subfolders are refused. */
+  'folders:delete': {
+    input: z.object({ folderId: z.string() }),
+    output: z.undefined()
+  },
+  /** Marks every message in the account's Inbox read or unread, on the server and here. */
+  'accounts:markAll': {
+    input: z.object({ id: z.string(), seen: z.boolean() }),
+    output: z.object({ changed: z.number().int() })
   },
   'accounts:resync': {
     input: z.object({ id: z.string() }),
@@ -188,6 +212,11 @@ export const ipcContract = {
   /** Remember to always load remote images for this sender. */
   'senders:allowImages': {
     input: z.object({ address: z.string().min(3).max(320) }),
+    output: z.undefined()
+  },
+  /** Changes how an account is named in the sidebar and as the sender name on mail you send. */
+  'accounts:rename': {
+    input: z.object({ id: z.string(), displayName: z.string().trim().max(80) }),
     output: z.undefined()
   },
   'accounts:setSignature': {
@@ -324,6 +353,38 @@ export const ipcContract = {
     input: z.object({ folderId: z.string() }),
     output: z.object({ loaded: z.number().int(), more: z.boolean() })
   },
+  /** Searches you saved, in the order you made them. */
+  'searches:list': { input: z.undefined(), output: z.array(savedSearchSchema) },
+  'searches:save': {
+    input: z.object({ name: z.string().trim().min(1).max(60), query: z.string().trim().min(1).max(500) }),
+    output: savedSearchSchema
+  },
+  'searches:delete': { input: z.object({ id: z.string() }), output: z.undefined() },
+  /** Rules that sort new inbox mail: label, categorize, mark read, star or archive. */
+  'rules:list': { input: z.undefined(), output: z.array(ruleSchema) },
+  'rules:save': { input: ruleInputSchema, output: ruleSchema },
+  'rules:delete': { input: z.object({ id: z.string() }), output: z.undefined() },
+  /** Applies one rule to the newest 500 inbox messages. Returns how many matched. */
+  'rules:run': { input: z.object({ id: z.string() }), output: z.object({ matched: z.number().int() }) },
+  /** The media kit or rate card you attach to replies; null if none is set or the file is gone. */
+  'mediaKit:get': { input: z.undefined(), output: mediaKitSchema.nullable() },
+  /** Asks you to pick the file. null if you cancel. */
+  'mediaKit:choose': { input: z.undefined(), output: mediaKitSchema.nullable() },
+  'mediaKit:clear': { input: z.undefined(), output: z.undefined() },
+  /** Minimize, maximize, restore or close the window (it has no frame of its own). */
+  'window:control': {
+    input: z.object({ action: z.enum(['minimize', 'maximize', 'restore', 'close']) }),
+    output: z.undefined()
+  },
+  'window:bounds': {
+    input: z.undefined(),
+    output: z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number(), maximized: z.boolean() })
+  },
+  /** Moves or resizes the window (used by the drag handles on its edges). */
+  'window:setBounds': {
+    input: z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() }),
+    output: z.undefined()
+  },
   /** Your labels, with how many messages carry each. Labels live on this computer only. */
   'labels:list': { input: z.undefined(), output: z.array(labelSchema) },
   'labels:create': {
@@ -335,6 +396,11 @@ export const ipcContract = {
   'messages:setLabels': {
     input: z.object({ id: z.string(), labelIds: z.array(z.string()).max(50) }),
     output: z.undefined()
+  },
+  /** Opens a PDF attachment in the computer's PDF viewer (after checking it really is a PDF). */
+  'attachments:open': {
+    input: z.object({ messageId: z.string(), attachmentId: z.string() }),
+    output: z.object({ opened: z.boolean() })
   },
   'attachments:save': {
     input: z.object({ messageId: z.string(), attachmentId: z.string() }),
@@ -349,6 +415,7 @@ export const ipcEvents = {
   /** The outbox changed: a message was queued, sent, failed, or undone. */
   'outbox:changed': z.object({}),
   'streamsafe:changed': streamSafeStateSchema,
+  'window:state': z.object({ maximized: z.boolean() }),
   /** A notification was clicked: open this message. */
   'notification:open': z.object({ messageId: z.string() })
 } as const

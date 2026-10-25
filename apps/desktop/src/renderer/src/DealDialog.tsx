@@ -1,3 +1,4 @@
+import { askConfirm } from './dialogs'
 import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { TriangleAlert } from 'lucide-react'
@@ -77,7 +78,7 @@ export default function DealDialog({
   }
 
   const remove = async () => {
-    if (!confirm(`Delete the ${deal.brand} deal? The email stays in your inbox.`)) return
+    if (!(await askConfirm({ title: `Delete the ${deal.brand} deal?`, message: 'The email stays in your inbox.', confirmLabel: 'Delete deal', danger: true }))) return
     await window.imc.invoke('deals:delete', { id: deal.id })
     await qc.invalidateQueries({ queryKey: ['deals'] })
     dialog.current?.close()

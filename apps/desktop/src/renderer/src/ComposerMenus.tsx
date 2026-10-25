@@ -1,3 +1,4 @@
+import { askConfirm } from './dialogs'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { CalendarClock, ChevronDown, LayoutTemplate, Paperclip, Trash2 } from 'lucide-react'
@@ -48,7 +49,7 @@ export function TemplatesMenu({
   const templates = useTemplates()
 
   const remove = async (t: Template) => {
-    if (!confirm(`Delete the template "${t.name}"?`)) return
+    if (!(await askConfirm({ title: `Delete the template "${t.name}"?`, message: 'This cannot be undone.', confirmLabel: 'Delete template', danger: true }))) return
     await window.imc.invoke('templates:delete', { id: t.id })
     await qc.invalidateQueries({ queryKey: ['templates'] })
   }

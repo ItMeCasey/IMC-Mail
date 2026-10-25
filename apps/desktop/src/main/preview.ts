@@ -25,3 +25,6 @@ export function previewOf(filename: string, mime: string, content: Buffer): Atta
   }
   return { kind: 'none' }
 }
+
+/** True when the bytes start like a PDF, whatever the file was called. */
+export const looksLikePdf = (b: Buffer): boolean => b.length > 8 && b.subarray(0, 1024).toString('latin1').includes('%PDF-')

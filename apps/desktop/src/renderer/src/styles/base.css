@@ -10,7 +10,8 @@ body,
 
 body {
   margin: 0;
-  background: var(--ground);
+  /* The window is transparent; WindowFrame paints the rounded surface. */
+  background: transparent;
   color: var(--ink);
   font-family: var(--font-sans);
   font-size: var(--text-base);
@@ -82,6 +83,8 @@ dialog {
 }
 dialog::backdrop {
   background: var(--scrim);
+  /* Follows the window's rounded corners instead of covering the transparent corner pixels. */
+  border-radius: var(--win-radius);
 }
 }
 

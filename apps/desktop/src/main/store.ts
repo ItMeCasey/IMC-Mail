@@ -4,6 +4,10 @@ import {
   assess,
   type CalendarEvent,
   type Label,
+  type SavedSearch,
+  type Rule,
+  type RuleInput,
+  type RuleTarget,
   type CalendarResponse,
   type Template,
   classify,
@@ -231,6 +235,35 @@ export class MailStore {
       )
       .run(id, accountId, f.path, f.name, f.role)
     return id
+  }
+
+  /** Whether other cached folders sit inside this one (their path starts with its path and a separator). */
+  hasSubfolders(folderId: string): boolean {
+    const f = this.getFolder(folderId)
+    if (!f) return false
+    return (
+      this.db
+        .prepare("SELECT 1 FROM folder WHERE account_id = ? AND id != ? AND substr(path, 1, length(?) + 1) IN (? || '/', ? || '.', ? || '\\')")
+        .get(f.accountId, f.id, f.path, f.path, f.path, f.path) !== undefined
+    )
+  }
+
+  /**
+   * Forgets a folder and the ones inside it, with their cached messages. After a rename the next
+   * sync brings them back under the new name (message ids contain the folder path, so they
+   * cannot be renamed in place).
+   */
+  removeFolderTree(folderId: string): void {
+    const f = this.getFolder(folderId)
+    if (!f) return
+    this.db
+      .prepare("DELETE FROM folder WHERE account_id = ? AND (id = ? OR substr(path, 1, length(?) + 1) IN (? || '/', ? || '.', ? || '\\'))")
+      .run(f.accountId, f.id, f.path, f.path, f.path, f.path)
+  }
+
+  /** Removes a folder and (by cascade) its cached messages. */
+  removeFolder(folderId: string): void {
+    this.db.prepare('DELETE FROM folder WHERE id = ?').run(folderId)
   }
 
   /** Drops folders that no longer exist on the server. */
@@ -481,6 +514,7 @@ export class MailStore {
       parsed.account.length > 0 ||
       parsed.inFolder.length > 0 ||
       parsed.category.length > 0 ||
+      parsed.label.length > 0 ||
       parsed.before !== null ||
       parsed.after !== null
     if (!hasAnything) return []
@@ -730,6 +764,24 @@ export class MailStore {
     return next
   }
 
+  /** Sets or clears the read flag on every cached message in a folder. Returns how many changed. */
+  setSeenInFolder(folderId: string, seen: boolean): number {
+    const rows = this.db.prepare('SELECT id, flags FROM message WHERE folder_id = ?').all(folderId) as { id: string; flags: string }[]
+    const update = this.db.prepare('UPDATE message SET flags = ? WHERE id = ?')
+    let changed = 0
+    this.db.transaction(() => {
+      for (const r of rows) {
+        const flags = new Set(r.flags.split(' ').filter(Boolean))
+        if (flags.has(SEEN) === seen) continue
+        if (seen) flags.add(SEEN)
+        else flags.delete(SEEN)
+        update.run([...flags].join(' '), r.id)
+        changed++
+      }
+    })()
+    return changed
+  }
+
   allowImagesFor(address: string): void {
     this.db
       .prepare('INSERT OR IGNORE INTO image_allow (address) VALUES (?)')
@@ -816,6 +868,76 @@ export class MailStore {
       this.db.transaction(() => ids.forEach((id) => del.run(id)))()
     }
     return ids
+  }
+
+  // ---- saved searches --------------------------------------------------------------
+
+  listSavedSearches(): SavedSearch[] {
+    return this.db.prepare('SELECT id, name, query FROM saved_search ORDER BY created_at, rowid').all() as SavedSearch[]
+  }
+
+  saveSearch(name: string, query: string, now = Date.now()): SavedSearch {
+    const clean = { name: name.trim(), query: query.trim() }
+    // Saving the same search again just renames it.
+    const same = this.db.prepare('SELECT id FROM saved_search WHERE query = ?').get(clean.query) as { id: string } | undefined
+    const id = same?.id ?? randomUUID()
+    if (same) this.db.prepare('UPDATE saved_search SET name = ? WHERE id = ?').run(clean.name, id)
+    else this.db.prepare('INSERT INTO saved_search (id, name, query, created_at) VALUES (?, ?, ?, ?)').run(id, clean.name, clean.query, now)
+    return { id, ...clean }
+  }
+
+  deleteSavedSearch(id: string): void {
+    this.db.prepare('DELETE FROM saved_search WHERE id = ?').run(id)
+  }
+
+  // ---- rules ----------------------------------------------------------------------
+
+  listRules(): Rule[] {
+    return (
+      this.db.prepare('SELECT id, name, enabled, match, actions FROM rule ORDER BY created_at, rowid').all() as {
+        id: string
+        name: string
+        enabled: number
+        match: string
+        actions: string
+      }[]
+    ).map((r) => ({ id: r.id, name: r.name, enabled: r.enabled === 1, match: JSON.parse(r.match), actions: JSON.parse(r.actions) }))
+  }
+
+  saveRule(input: Omit<Rule, 'id'> & { id?: string }, now = Date.now()): Rule {
+    const id = input.id ?? randomUUID()
+    const exists = input.id ? this.db.prepare('SELECT 1 FROM rule WHERE id = ?').get(input.id) : undefined
+    const cols = [input.name.trim(), input.enabled ? 1 : 0, JSON.stringify(input.match), JSON.stringify(input.actions)] as const
+    if (exists) this.db.prepare('UPDATE rule SET name = ?, enabled = ?, match = ?, actions = ? WHERE id = ?').run(...cols, id)
+    else this.db.prepare('INSERT INTO rule (name, enabled, match, actions, id, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(...cols, id, now)
+    return { ...input, id, name: input.name.trim() } as Rule
+  }
+
+  deleteRule(id: string): void {
+    this.db.prepare('DELETE FROM rule WHERE id = ?').run(id)
+  }
+
+  /** What a rule looks at, for messages that are in an inbox. */
+  ruleTargets(ids: string[]): { id: string; target: RuleTarget }[] {
+    const get = this.db.prepare(
+      `SELECT m.id, m.from_name, m.from_addr, m.to_addrs, m.subject, m.snippet
+         FROM message m JOIN folder f ON f.id = m.folder_id WHERE m.id = ? AND f.role = 'inbox'`
+    )
+    const out: { id: string; target: RuleTarget }[] = []
+    for (const id of ids) {
+      const r = get.get(id) as { id: string; from_name: string; from_addr: string; to_addrs: string; subject: string; snippet: string } | undefined
+      if (r) out.push({ id: r.id, target: { fromName: r.from_name, fromAddr: r.from_addr, to: r.to_addrs, subject: r.subject, snippet: r.snippet } })
+    }
+    return out
+  }
+
+  /** The newest inbox messages, for running a rule over existing mail. */
+  recentInboxIds(limit: number): string[] {
+    return (
+      this.db
+        .prepare("SELECT m.id FROM message m JOIN folder f ON f.id = m.folder_id WHERE f.role = 'inbox' ORDER BY m.date DESC LIMIT ?")
+        .all(limit) as { id: string }[]
+    ).map((r) => r.id)
   }
 
   // ---- labels ------------------------------------------------------------------------
@@ -1301,6 +1423,10 @@ export class MailStore {
   }
 
   // ---- compose: signatures, drafts, outbox, contacts ---------------------------
+
+  setDisplayName(accountId: string, displayName: string): void {
+    this.db.prepare('UPDATE account SET display_name = ? WHERE id = ?').run(displayName.trim(), accountId)
+  }
 
   setSignature(accountId: string, signature: string): void {
     this.db.prepare('UPDATE account SET signature = ? WHERE id = ?').run(signature, accountId)

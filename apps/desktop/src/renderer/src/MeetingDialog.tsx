@@ -1,3 +1,4 @@
+import { askConfirm } from './dialogs'
 import { useEffect, useRef, useState } from 'react'
 import { Download, Mail } from 'lucide-react'
 import type { Account, CalendarEvent } from '@imc/core'
@@ -27,12 +28,15 @@ const nextSlot = () => {
 export default function MeetingDialog({
   accounts,
   event,
+  initialStart = null,
   onOpenMessage,
   onClose,
   onChanged
 }: {
   accounts: Account[]
   event: CalendarEvent | null
+  /** For a new meeting: a start picked from the calendar, instead of the next half hour. */
+  initialStart?: number | null
   onOpenMessage: (id: string) => void
   onClose: () => void
   onChanged: () => void
@@ -43,7 +47,7 @@ export default function MeetingDialog({
   }, [])
 
   const editable = event === null || event.mine
-  const start0 = event?.start ?? nextSlot()
+  const start0 = event?.start ?? initialStart ?? nextSlot()
   const [summary, setSummary] = useState(event?.summary ?? '')
   const [accountId, setAccountId] = useState(event?.accountId ?? accounts[0]?.id ?? '')
   const [start, setStart] = useState(toLocalInput(start0))
@@ -112,9 +116,10 @@ export default function MeetingDialog({
     )
   }
 
-  const cancelMeeting = () => {
-    if (!event || !confirm('Cancel this meeting? Everyone invited is emailed a cancellation.')) return
-    void run(() => window.imc.invoke('calendar:cancel', { id: event.id }))
+  const cancelMeeting = async () => {
+    if (!event) return
+    const ok = await askConfirm({ title: 'Cancel this meeting?', message: 'Everyone invited is emailed a cancellation.', confirmLabel: 'Cancel meeting', cancelLabel: 'Keep it', danger: true })
+    if (ok) void run(() => window.imc.invoke('calendar:cancel', { id: event.id }))
   }
 
   return (
@@ -271,7 +276,7 @@ export default function MeetingDialog({
                 </button>
               )}
               {event.mine && (
-                <button type="button" className={`${btn} text-alert`} disabled={busy} onClick={cancelMeeting}>
+                <button type="button" className={`${btn} text-alert`} disabled={busy} onClick={() => void cancelMeeting()}>
                   Cancel meeting
                 </button>
               )}

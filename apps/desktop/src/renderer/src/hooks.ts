@@ -72,3 +72,9 @@ export const useDeals = () =>
 
 export const useLabels = () =>
   useQuery({ queryKey: ['labels'], queryFn: () => window.imc.invoke('labels:list') })
+
+export const useSavedSearches = () =>
+  useQuery({ queryKey: ['searches'], queryFn: () => window.imc.invoke('searches:list') })
+
+export const useMediaKit = () =>
+  useQuery({ queryKey: ['mediakit'], queryFn: () => window.imc.invoke('mediaKit:get') })

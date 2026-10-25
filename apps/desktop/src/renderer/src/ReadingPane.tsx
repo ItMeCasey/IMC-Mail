@@ -21,6 +21,7 @@ import {
   X
 } from 'lucide-react'
 import {
+  canOpenAttachment,
   canPreviewAttachment,
   CATEGORY_LABELS,
   categorySchema,
@@ -62,6 +63,14 @@ function AttachmentChip({ messageId, a }: { messageId: string; a: Attachment }) 
   const [state, setState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [msg, setMsg] = useState('')
   const [preview, setPreview] = useState<Exclude<AttachmentPreview, { kind: 'none' }> | null>(null)
+  const openPdf = async () => {
+    try {
+      await window.imc.invoke('attachments:open', { messageId, attachmentId: a.id })
+    } catch (e) {
+      setState('error')
+      setMsg(errText(e))
+    }
+  }
   const openPreview = async () => {
     try {
       const p = await window.imc.invoke('attachments:preview', { messageId, attachmentId: a.id })
@@ -101,6 +110,11 @@ function AttachmentChip({ messageId, a }: { messageId: string; a: Attachment }) 
       {canPreviewAttachment(a.mime, a.filename) && (
         <button type="button" className="self-start text-xs text-accent underline underline-offset-2 hover:text-accent-hover" onClick={() => void openPreview()}>
           Preview
+        </button>
+      )}
+      {canOpenAttachment(a.mime, a.filename) && (
+        <button type="button" className="self-start text-xs text-accent underline underline-offset-2 hover:text-accent-hover" onClick={() => void openPdf()}>
+          Open PDF
         </button>
       )}
       {preview && <PreviewDialog name={a.filename} preview={preview} onClose={() => setPreview(null)} />}

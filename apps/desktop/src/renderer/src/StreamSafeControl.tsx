@@ -16,9 +16,11 @@ function summary(s: StreamSafeState): string {
   return s.detected ? `Automatic: ${s.detected} is running` : 'Automatic: no streaming software'
 }
 
-export default function StreamSafeControl({ state }: { state: StreamSafeState }) {
+export default function StreamSafeControl({ state, inline = false }: { state: StreamSafeState; inline?: boolean }) {
   const qc = useQueryClient()
-  const [open, setOpen] = useState(false)
+  const [openPopover, setOpen] = useState(false)
+  // Inline (in the settings panel) the options are always shown, in the page rather than a popover.
+  const open = inline || openPopover
   const root = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -49,6 +51,7 @@ export default function StreamSafeControl({ state }: { state: StreamSafeState })
       <button
         type="button"
         aria-expanded={open}
+        hidden={inline}
         onClick={() => setOpen((v) => !v)}
         className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors duration-(--dur-fast) ${
           state.active ? 'bg-selected text-ink' : 'text-ink-2 hover:bg-hover hover:text-ink'
@@ -65,9 +68,13 @@ export default function StreamSafeControl({ state }: { state: StreamSafeState })
 
       {open && (
         <div
-          role="dialog"
+          role={inline ? undefined : 'dialog'}
           aria-label="Stream-safe mode"
-          className="absolute right-0 bottom-full left-0 z-20 mb-2 space-y-3 rounded-md border border-line-strong bg-raised p-3"
+          className={
+            inline
+              ? 'space-y-3'
+              : 'absolute right-0 bottom-full left-0 z-20 mb-2 space-y-3 rounded-md border border-line-strong bg-raised p-3'
+          }
         >
           <p className="text-sm leading-snug text-ink-2">
             Hides senders, subjects, message bodies, and account names, and keeps this window out

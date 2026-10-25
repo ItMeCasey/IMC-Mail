@@ -1,4 +1,5 @@
-import { Plus, Star } from 'lucide-react'
+import { Check, Plus, Star } from 'lucide-react'
+import BulkBar, { type BulkAction } from './BulkBar'
 import CategoryTag from './CategoryTag'
 import RiskTag from './RiskTag'
 import { CalendarDays } from 'lucide-react'
@@ -95,6 +96,16 @@ function Marks({ m }: { m: MessageSummary }) {
   )
 }
 
+/** Lets a message be dropped on a folder in the sidebar. The tags say which account and folder it is from. */
+function startDrag(e: React.DragEvent, m: MessageSummary, checked: Set<string>) {
+  // Dragging a ticked message takes every ticked message with it.
+  const ids = checked.has(m.id) ? [...checked] : [m.id]
+  e.dataTransfer.setData('text/imc-message', ids.join(','))
+  e.dataTransfer.setData(`application/x-imc-account-${m.accountId}`, '1')
+  e.dataTransfer.setData(`application/x-imc-folder-${m.folderId}`, '1')
+  e.dataTransfer.effectAllowed = 'move'
+}
+
 export default function MessageList({
   title,
   messages,
@@ -102,11 +113,16 @@ export default function MessageList({
   loading,
   hide,
   footer,
+  onSaveSearch,
   query,
   onQuery,
   searching,
   selectedId,
   forceCompact = false,
+  checked,
+  onRowClick,
+  onBulk,
+  onClearChecked,
   onSelect,
   onAdd
 }: {
@@ -118,12 +134,19 @@ export default function MessageList({
   hide: boolean
   /** Shown under the list (the "load older mail" button). */
   footer?: React.ReactNode
+  onSaveSearch?: (name: string) => void
   query: string
   onQuery: (q: string) => void
   searching: boolean
   selectedId: string | null
   /** Keep the narrow two-line layout even with no message open (the composer is showing). */
   forceCompact?: boolean
+  /** Messages ticked for a bulk action. */
+  checked: Set<string>
+  /** A click on a row, with the modifier keys held: plain opens it, Ctrl ticks it, Shift ticks a range. */
+  onRowClick: (id: string, keys: { ctrl: boolean; shift: boolean }) => void
+  onBulk: (action: BulkAction) => void
+  onClearChecked: () => void
   onSelect: (id: string) => void
   onAdd: () => void
 }) {
@@ -162,8 +185,9 @@ export default function MessageList({
             {messages.length} {searching ? (messages.length === 1 ? 'result' : 'results') : 'threads'}
           </span>
         )}
-        <SearchBox value={query} onChange={onQuery} />
+        <SearchBox value={query} onChange={onQuery} onSave={onSaveSearch} />
       </header>
+      {checked.size > 0 && <BulkBar count={checked.size} onAction={onBulk} onClear={onClearChecked} />}
 
       {empty ? (
         <Empty hasAccounts={accounts.length > 0} searching={searching} onAdd={onAdd} />
@@ -175,10 +199,12 @@ export default function MessageList({
               <li key={m.id} className="border-b border-line">
                 <button
                   type="button"
+                  draggable
+                  onDragStart={(e) => startDrag(e, m, checked)}
                   aria-current={active ? 'true' : undefined}
-                  onClick={() => onSelect(m.id)}
+                  onClick={(e) => onRowClick(m.id, { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey })}
                   className={`flex w-full items-start gap-3 px-4 py-2.5 text-left transition-colors duration-(--dur-fast) focus-visible:-outline-offset-2 ${
-                    active ? 'bg-selected' : 'hover:bg-hover'
+                    active || checked.has(m.id) ? 'bg-selected' : 'hover:bg-hover'
                   }`}
                 >
                   <span
@@ -192,6 +218,7 @@ export default function MessageList({
                       <span
                         className={`min-w-0 flex-1 truncate ${m.unread ? 'font-semibold text-ink' : 'text-ink-2'}`}
                       >
+                        {checked.has(m.id) && <Check size={14} strokeWidth={2} aria-label="Selected" className="mr-1 inline text-ink" />}
                         <Private active={hide}>{m.fromName || m.fromAddr || '(unknown)'}</Private>
                       </span>
                       <time className="num shrink-0 text-sm text-ink-3">{m.snoozedUntil != null ? `Back ${describeTime(m.snoozedUntil)}` : m.followUpAt != null ? `Follow up ${describeTime(m.followUpAt)}` : formatDate(m.date)}</time>
@@ -266,11 +293,14 @@ export default function MessageList({
                     <tr
                       key={m.id}
                       tabIndex={0}
-                      onClick={() => onSelect(m.id)}
+                      draggable
+                      onDragStart={(e) => startDrag(e, m, checked)}
+                      onClick={(e) => onRowClick(m.id, { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey })}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter') onSelect(m.id)
                       }}
-                      className="h-(--row-h) cursor-default border-b border-line transition-colors duration-(--dur-fast) hover:bg-hover focus-visible:-outline-offset-2"
+                      aria-selected={checked.has(m.id) || undefined}
+                      className={`h-(--row-h) cursor-default border-b border-line transition-colors duration-(--dur-fast) hover:bg-hover focus-visible:-outline-offset-2 ${checked.has(m.id) ? 'bg-selected' : ''}`}
                     >
                       <td className={`${td} num text-right text-sm text-ink-3`}>{i + 1}</td>
                       <td className="px-3">
@@ -282,6 +312,7 @@ export default function MessageList({
                         />
                       </td>
                       <td className={`${td} ${m.unread ? 'font-semibold text-ink' : 'text-ink-2'}`}>
+                        {checked.has(m.id) && <Check size={14} strokeWidth={2} aria-label="Selected" className="mr-1 inline text-ink" />}
                         <Private active={hide}>{m.fromName || m.fromAddr || '(unknown)'}</Private>
                       </td>
                       <td className="px-3">

@@ -54,6 +54,48 @@ describe('labels', () => {
     expect(uids(a.id)).toEqual([77])
   })
 
+  it('marks a whole folder read or unread without touching other flags or folders', () => {
+    store.applyFetched(acct, inbox, [m(4, { flags: ['\\Seen', '\\Flagged'] })], null)
+    store.applyFetched(acct, archive, [m(50)], null)
+    expect(store.setSeenInFolder(inbox, true)).toBe(3) // 1, 2, 3 were unread; 4 already read
+    expect(store.inboxUnread()).toBe(0)
+    expect(store.getMessage(`${inbox}:4`)?.flags).toContain('\\Flagged')
+    expect(store.getMessage(`${archive}:50`)?.flags).toBe('') // another folder is untouched
+    expect(store.setSeenInFolder(inbox, false)).toBe(4)
+    expect(store.inboxUnread()).toBe(4)
+    expect(store.getMessage(`${inbox}:4`)?.flags).toBe('\\Flagged')
+  })
+
+  it('knows which folders sit inside another, and removing a folder takes its messages', () => {
+    const sub = store.upsertFolder(acct, { path: 'Archive/2026', name: '2026', role: null })
+    expect(store.hasSubfolders(archive)).toBe(true)
+    expect(store.hasSubfolders(sub)).toBe(false)
+    expect(store.hasSubfolders(inbox)).toBe(false)
+    store.applyFetched(acct, sub, [m(70)], null)
+    store.removeFolder(sub)
+    expect(store.hasSubfolders(archive)).toBe(false)
+    expect(store.getMessage(`${sub}:70`)).toBeUndefined()
+  })
+
+  it('forgetting a folder tree drops it, what is inside it and their messages, and nothing alongside', () => {
+    const parent = store.upsertFolder(acct, { path: 'Work', name: 'Work', role: null })
+    const kid = store.upsertFolder(acct, { path: 'Work/Brands', name: 'Brands', role: null })
+    const other = store.upsertFolder(acct, { path: 'Workshop', name: 'Workshop', role: null })
+    store.applyFetched(acct, kid, [m(80)], null)
+    store.removeFolderTree(parent)
+    expect(store.getFolder(parent)).toBeUndefined()
+    expect(store.getFolder(kid)).toBeUndefined()
+    expect(store.getMessage(`${kid}:80`)).toBeUndefined()
+    expect(store.getFolder(other)).toBeDefined() // a longer name that merely starts the same is not inside it
+  })
+
+  it('renames an account, and an empty name falls back to the address', () => {
+    store.setDisplayName(acct, '  Casey Streams ')
+    expect(store.getAccount(acct)?.displayName).toBe('Casey Streams')
+    store.setDisplayName(acct, '')
+    expect(store.getAccount(acct)?.displayName).toBe('')
+  })
+
   it('deleting a label takes it off every message, and refuses a message with no Message-ID', () => {
     const a = store.createLabel('Gone')
     store.setLabels(`${inbox}:3`, [a.id])

@@ -99,6 +99,22 @@ describe('waitForAuthCode', () => {
     expect(result.redirectUri).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/callback$/)
   })
 
+  it('with no path configured (Microsoft), sends a bare http://localhost:PORT and accepts the browser coming back to /', async () => {
+    const result = await waitForAuthCode({
+      host: '127.0.0.1',
+      path: '',
+      expectedState: 'good',
+      timeoutMs: 5000,
+      buildUrl: (redirect) => `https://provider.test/auth?redirect_uri=${encodeURIComponent(redirect)}`,
+      openUrl: (url) => {
+        const redirect = new URL(url).searchParams.get('redirect_uri')!
+        void fetch(`${redirect}/?code=xyz&state=good`)
+      }
+    })
+    expect(result.code).toBe('xyz')
+    expect(result.redirectUri).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/)
+  })
+
   it('rejects when the provider reports an error', async () => {
     await expect(run((r) => fetch(`${r}?error=access_denied&state=good`).then(() => {}))).rejects.toThrow(
       /access_denied/

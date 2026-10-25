@@ -1,15 +1,18 @@
+import appIcon from '../../build/icon.ico?asset'
 import { app, BrowserWindow, dialog, globalShortcut, nativeImage, Notification, protocol, shell } from 'electron'
 import { execFile } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { writeFile } from 'node:fs/promises'
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import { basename, join } from 'node:path'
 import { oauthProviders, type Account, type NotificationSettings } from '@imc/core'
 import { Credentials } from './credentials'
 import { brandFrom } from './deals'
 import { openDb, type Db } from './db'
 import { emit, registerIpc } from './ipc'
-import { dealsToCsv } from '@imc/core'
-import { previewOf } from './preview'
+import { cleanFolderName, dealsToCsv, PROTECTED_ROLES } from '@imc/core'
+import { looksLikePdf, previewOf } from './preview'
+import { RuleEngine } from './rules'
 import { dealDeadlineFromEmail } from './deal-deadline'
 import { BadgeController, badgePng } from './badge'
 import { CalendarService } from './calendar'
@@ -42,6 +45,12 @@ protocol.registerSchemesAsPrivileged([
 const safeFilename = (name: string): string =>
   basename(name).replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').slice(0, 150) || 'attachment'
 
+const windowState: { maximized: boolean; saved: Electron.Rectangle | null } = { maximized: false, saved: null }
+function reportMaximized(m: boolean): void {
+  windowState.maximized = m
+  emit('window:state', { maximized: m })
+}
+
 function createWindow(): void {
   const win = new BrowserWindow({
     width: 1280,
@@ -49,7 +58,13 @@ function createWindow(): void {
     minWidth: 1000,
     minHeight: 600,
     show: false,
-    backgroundColor: '#0d0f12',
+    // Frameless and transparent so the corners can be rounded in CSS; the title bar and resize
+    // edges are drawn by the app (see WindowFrame in the renderer).
+    icon: appIcon,
+    frame: false,
+    transparent: true,
+    hasShadow: false,
+    backgroundColor: '#00000000',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -60,6 +75,9 @@ function createWindow(): void {
 
   win.setContentProtection(!!streamSafe && streamSafe.state.active && streamSafe.state.hideFromCapture)
   win.once('ready-to-show', () => win.show())
+  // A transparent window cannot be maximized by the OS, so Electron sets its bounds; tell the page so it can square its corners.
+  win.on('maximize', () => reportMaximized(true))
+  win.on('unmaximize', () => reportMaximized(false))
 
   // Never navigate the app window or open child windows; hand external links to the OS browser.
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -95,11 +113,18 @@ app.whenReady().then(async () => {
     store,
     credentials,
     (accountId) => emit('sync:changed', { accountId }),
-    (ids) => notifier?.handleNew(ids)
+    (ids) => {
+      // Rules run first, so a message a rule archives or marks read does not raise a toast.
+      void (ruleEngine ? ruleEngine.apply(ids) : Promise.resolve(0)).finally(() => {
+        const keep = ids.filter((id) => store.ruleTargets([id]).length > 0)
+        notifier?.handleNew(keep)
+      })
+    }
   )
   // The calendar service needs compose to send invitations, and compose needs messages, so the
   // message service reaches the calendar through this small forwarder.
   let calendarSvc: CalendarService | undefined
+  let ruleEngine: RuleEngine | undefined
   const messages = new MessageService(
     store,
     sync,
@@ -112,6 +137,13 @@ app.whenReady().then(async () => {
       inviteFor: (messageId) => calendarSvc?.inviteFor(messageId) ?? null
     }
   )
+  ruleEngine = new RuleEngine(store, {
+    setFlags: (id, change) => messages.setFlags(id, change),
+    archive: async (id) => {
+      await messages.act(id, 'archive')
+    }
+  })
+  const rules = ruleEngine
   const compose = new ComposeService(
     store,
     new SmtpMailer(credentials, (id, path, raw) => sync.append(id, path, raw)),
@@ -160,6 +192,18 @@ app.whenReady().then(async () => {
     }
   })
   streamSafe.start()
+
+  /** The saved media kit, if the file is still there. */
+  const readMediaKit = () => {
+    const p = readSettings()['mediaKit']
+    if (typeof p !== 'string') return null
+    try {
+      const st = statSync(p)
+      return st.isFile() ? { path: p, filename: basename(p), size: st.size } : null
+    } catch {
+      return null
+    }
+  }
 
   // Desktop notifications for new mail, quiet while stream-safe mode is hiding things.
   let notificationSettings: NotificationSettings = {
@@ -333,6 +377,50 @@ app.whenReady().then(async () => {
       await credentials.remove(id)
       emit('sync:changed', { accountId: id })
     },
+    'folders:create': async ({ accountId, parentId, name }) => {
+      const clean = cleanFolderName(name)
+      if (!clean.ok) throw new Error(clean.error)
+      const parent = parentId ? store.getFolder(parentId) : undefined
+      if (parentId && (!parent || parent.accountId !== accountId)) throw new Error('That parent folder no longer exists')
+      const path = await sync.createFolder(accountId, parent?.path ?? null, clean.name)
+      // Show it at once; the next sync confirms it and fills in its role.
+      const folderId = store.upsertFolder(accountId, { path, name: clean.name, role: null })
+      emit('sync:changed', { accountId })
+      return { folderId }
+    },
+    'folders:rename': async ({ folderId, name }) => {
+      const clean = cleanFolderName(name)
+      if (!clean.ok) throw new Error(clean.error)
+      const f = store.getFolder(folderId)
+      if (!f) throw new Error('That folder no longer exists')
+      if (f.role && (PROTECTED_ROLES as readonly string[]).includes(f.role)) throw new Error('This is a standard folder and cannot be renamed.')
+      const row = store.listFolders().find((x) => x.id === folderId)
+      const oldName = row?.name ?? f.path
+      const prefix = f.path.endsWith(oldName) ? f.path.slice(0, f.path.length - oldName.length) : ''
+      const newPath = prefix + clean.name
+      if (newPath === f.path) return
+      await sync.renameFolder(f.accountId, f.path, newPath)
+      store.removeFolderTree(folderId)
+      emit('sync:changed', { accountId: f.accountId })
+    },
+    'folders:delete': async ({ folderId }) => {
+      const f = store.getFolder(folderId)
+      if (!f) throw new Error('That folder no longer exists')
+      if (f.role && (PROTECTED_ROLES as readonly string[]).includes(f.role)) throw new Error('This is a standard folder and cannot be deleted.')
+      if (store.hasSubfolders(folderId)) throw new Error('Delete or move the folders inside it first.')
+      await sync.deleteFolder(f.accountId, f.path)
+      store.removeFolder(folderId)
+      emit('sync:changed', { accountId: f.accountId })
+    },
+    'accounts:markAll': async ({ id, seen }) => {
+      const inbox = store.findFolderByRole(id, 'inbox')
+      if (!inbox) throw new Error('This account has no Inbox yet. Try again after it has synced.')
+      // The server first, so a refusal leaves everything as it was.
+      await sync.markAllSeen(id, inbox.path, seen)
+      const changed = store.setSeenInFolder(inbox.id, seen)
+      emit('sync:changed', { accountId: id })
+      return { changed }
+    },
     'accounts:resync': ({ id }) => {
       sync.resync(id)
     },
@@ -349,6 +437,52 @@ app.whenReady().then(async () => {
       const r = await sync.loadOlder(f.accountId, f)
       emit('sync:changed', { accountId: f.accountId })
       return r
+    },
+    'searches:list': () => store.listSavedSearches(),
+    'searches:save': ({ name, query }) => store.saveSearch(name, query),
+    'searches:delete': ({ id }) => {
+      store.deleteSavedSearch(id)
+    },
+    'rules:list': () => store.listRules(),
+    'rules:save': (input) => store.saveRule(input),
+    'rules:delete': ({ id }) => {
+      store.deleteRule(id)
+    },
+    'rules:run': async ({ id }) => ({ matched: await rules.apply(store.recentInboxIds(500), id) }),
+    'mediaKit:get': () => readMediaKit(),
+    'mediaKit:choose': async () => {
+      const pick = await dialog.showOpenDialog({ title: 'Choose your media kit or rate card', properties: ['openFile'] })
+      if (pick.canceled || !pick.filePaths[0]) return null
+      writeFileSync(settingsFile, JSON.stringify({ ...readSettings(), mediaKit: pick.filePaths[0] }, null, 2))
+      return readMediaKit()
+    },
+    'mediaKit:clear': () => {
+      const { mediaKit: _gone, ...rest } = readSettings()
+      writeFileSync(settingsFile, JSON.stringify(rest, null, 2))
+    },
+    'window:control': ({ action }) => {
+      const w = BrowserWindow.getAllWindows()[0]
+      if (!w) return
+      if (action === 'minimize') w.minimize()
+      else if (action === 'maximize') {
+        if (!windowState.maximized) windowState.saved = w.getBounds()
+        w.maximize()
+        reportMaximized(true)
+      } else if (action === 'restore') {
+        if (windowState.saved) w.setBounds(windowState.saved)
+        else w.unmaximize()
+        reportMaximized(false)
+      } else w.close()
+    },
+    'window:bounds': () => {
+      const w = BrowserWindow.getAllWindows()[0]
+      if (!w) return { x: 0, y: 0, width: 1280, height: 800, maximized: false }
+      return { ...w.getBounds(), maximized: windowState.maximized }
+    },
+    'window:setBounds': ({ x, y, width, height }) => {
+      const w = BrowserWindow.getAllWindows()[0]
+      if (!w || windowState.maximized) return
+      w.setBounds({ x, y, width: Math.max(1000, width), height: Math.max(600, height) })
     },
     'labels:list': () => store.listLabels(),
     'labels:create': ({ name }) => store.createLabel(name),
@@ -408,6 +542,10 @@ app.whenReady().then(async () => {
       await messages.setFlags(id, { seen, flagged })
       const accountId = store.getMessage(id)?.accountId
       if (accountId) emit('sync:changed', { accountId })
+    },
+    'accounts:rename': ({ id, displayName }) => {
+      store.setDisplayName(id, displayName)
+      emit('sync:changed', { accountId: id })
     },
     'accounts:setSignature': ({ id, signature }) => {
       store.setSignature(id, signature)
@@ -479,6 +617,19 @@ app.whenReady().then(async () => {
       if (!meta) throw new Error('That attachment is not available')
       const att = await messages.attachment(messageId, attachmentId)
       return previewOf(meta.filename, meta.mime, att.content)
+    },
+    'attachments:open': async ({ messageId, attachmentId }) => {
+      const meta = store.getBody(messageId)?.attachments.find((a) => a.id === attachmentId)
+      if (!meta) throw new Error('That attachment is not available')
+      const att = await messages.attachment(messageId, attachmentId)
+      if (!looksLikePdf(att.content)) throw new Error('This file is not a real PDF, so it was not opened. Save it if you trust it.')
+      const dir = join(app.getPath('temp'), 'imc-mail-open')
+      await mkdir(dir, { recursive: true })
+      const path = join(dir, `${randomUUID()}-${safeFilename(meta.filename).replace(/\.pdf$/i, '')}.pdf`)
+      await writeFile(path, att.content)
+      const err = await shell.openPath(path)
+      if (err) throw new Error(`Could not open the PDF: ${err}`)
+      return { opened: true }
     },
     'attachments:save': async ({ messageId, attachmentId }) => {
       const meta = store.getBody(messageId)?.attachments.find((a) => a.id === attachmentId)

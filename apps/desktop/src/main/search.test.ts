@@ -146,6 +146,14 @@ describe('MailStore.search', () => {
     expect(ids('"four thousand"')).toEqual([`${inbox}:1`])
   })
 
+  it('finds messages by label, alone or with text', () => {
+    const tax = store.createLabel('Tax docs')
+    store.setLabels(`${inbox}:1`, [tax.id])
+    expect(ids('label:tax')).toEqual([`${inbox}:1`])
+    expect(ids('label:"tax docs" nova')).toEqual([`${inbox}:1`])
+    expect(ids('tag:nothing')).toEqual([])
+  })
+
   it('searches fields separately', () => {
     expect(ids('from:dana')).toEqual([`${inbox}:2`])
     expect(ids('subject:lunch')).toEqual([`${inbox}:2`])
@@ -184,5 +192,11 @@ describe('MailStore.search', () => {
     expect(ids('   ')).toEqual([])
     expect(() => ids('"unterminated AND (')).not.toThrow()
     expect(() => ids('NEAR(')).not.toThrow()
+  })
+})
+
+describe('label: operator', () => {
+  it('parses label and tag, with quoted names', () => {
+    expect(parseQuery('label:taxes tag:"tax docs"').label).toEqual(['taxes', 'tax docs'])
   })
 })

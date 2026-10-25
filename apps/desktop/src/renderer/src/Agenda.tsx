@@ -1,14 +1,17 @@
 import { useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { CalendarDays, MapPin, Plus, Repeat, Video } from 'lucide-react'
+import { CalendarDays, ChevronLeft, ChevronRight, MapPin, Plus, Repeat, Video } from 'lucide-react'
 import type { Account, CalendarEvent, CalendarOccurrence } from '@imc/core'
 import MeetingDialog from './MeetingDialog'
+import MonthView from './MonthView'
+import { monthGrid } from './monthGrid'
 import { RESPONSE_LABEL } from './InviteCard'
 import { Private } from './streamsafe'
 
 const dayHead = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric' })
 const clock = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
 const DAYS = 30
+const monthName = new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' })
 
 const startOfDay = (ms: number) => new Date(new Date(ms).setHours(0, 0, 0, 0)).getTime()
 
@@ -26,13 +29,25 @@ export default function Agenda({
   onOpenMessage: (id: string) => void
 }) {
   const qc = useQueryClient()
-  const from = useMemo(() => startOfDay(Date.now()), [])
-  const to = from + DAYS * 86_400_000
+  const [mode, setMode] = useState<'agenda' | 'month'>('agenda')
+  const [cursor, setCursor] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1))
+  const [newStart, setNewStart] = useState<number | null>(null)
+  // The agenda shows the next 30 days; the month view shows the weeks drawn for that month.
+  const [from, to] = useMemo(() => {
+    if (mode === 'agenda') {
+      const f = startOfDay(Date.now())
+      return [f, f + DAYS * 86_400_000]
+    }
+    const weeks = monthGrid(cursor.getFullYear(), cursor.getMonth())
+    const last = weeks[weeks.length - 1]![6]!
+    return [weeks[0]![0]!.getTime(), new Date(last.getFullYear(), last.getMonth(), last.getDate() + 1).getTime()]
+  }, [mode, cursor])
   const list = useQuery({
-    queryKey: ['calendar', from],
+    queryKey: ['calendar', from, to],
     queryFn: () => window.imc.invoke('calendar:list', { from, to })
   })
   const [editing, setEditing] = useState<CalendarEvent | 'new' | null>(null)
+  const step = (n: number) => setCursor((c) => new Date(c.getFullYear(), c.getMonth() + n, 1))
 
   const days = useMemo(() => {
     const by = new Map<number, CalendarOccurrence[]>()
@@ -47,11 +62,45 @@ export default function Agenda({
     <section aria-label="Calendar" className="flex min-w-0 flex-1 flex-col bg-sheet">
       <header className="flex h-12 shrink-0 items-center gap-3 border-b border-line px-4">
         <CalendarDays size={18} strokeWidth={1.75} className="text-ink-2" aria-hidden />
-        <h2 className="flex-1 text-md font-semibold">Calendar</h2>
+        <h2 className="text-md font-semibold">Calendar</h2>
+        <div role="radiogroup" aria-label="View" className="flex divide-x divide-line overflow-hidden rounded-md border border-line-strong">
+          {(['agenda', 'month'] as const).map((m) => (
+            <button
+              key={m}
+              role="radio"
+              aria-checked={mode === m}
+              onClick={() => setMode(m)}
+              className={`h-8 px-3 text-sm ${mode === m ? 'bg-selected font-medium text-ink' : 'text-ink-2 hover:bg-hover hover:text-ink'}`}
+            >
+              {m === 'agenda' ? 'Agenda' : 'Month'}
+            </button>
+          ))}
+        </div>
+        {mode === 'month' && (
+          <div className="flex items-center gap-1">
+            <button className="grid size-8 place-items-center rounded-md text-ink-2 hover:bg-hover" aria-label="Previous month" onClick={() => step(-1)}>
+              <ChevronLeft size={16} strokeWidth={1.75} aria-hidden />
+            </button>
+            <span className="num min-w-36 text-center font-medium">{monthName.format(cursor)}</span>
+            <button className="grid size-8 place-items-center rounded-md text-ink-2 hover:bg-hover" aria-label="Next month" onClick={() => step(1)}>
+              <ChevronRight size={16} strokeWidth={1.75} aria-hidden />
+            </button>
+            <button
+              className="h-8 rounded-md border border-line-strong px-3 text-sm hover:bg-hover"
+              onClick={() => setCursor(new Date(new Date().getFullYear(), new Date().getMonth(), 1))}
+            >
+              Today
+            </button>
+          </div>
+        )}
+        <span className="flex-1" />
         <button
           type="button"
           disabled={accounts.length === 0}
-          onClick={() => setEditing('new')}
+          onClick={() => {
+            setNewStart(null)
+            setEditing('new')
+          }}
           className="flex h-8 items-center gap-1.5 rounded-md bg-accent px-3 font-medium text-on-accent transition-colors duration-(--dur-fast) hover:bg-accent-hover disabled:opacity-50"
         >
           <Plus size={14} strokeWidth={1.75} aria-hidden />
@@ -59,7 +108,21 @@ export default function Agenda({
         </button>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      {mode === 'month' && (
+        <MonthView
+          year={cursor.getFullYear()}
+          month={cursor.getMonth()}
+          occurrences={list.data ?? []}
+          hide={hide}
+          onOpen={(e) => setEditing(e)}
+          onNew={(at) => {
+            if (accounts.length === 0) return
+            setNewStart(at)
+            setEditing('new')
+          }}
+        />
+      )}
+      <div className={`min-h-0 flex-1 overflow-y-auto ${mode === 'month' ? 'hidden' : ''}`}>
         {list.isPending && <p className="p-4 text-ink-3">Loading…</p>}
         {list.data && days.length === 0 && (
           <div className="p-6 text-ink-2">
@@ -120,6 +183,7 @@ export default function Agenda({
         <MeetingDialog
           accounts={accounts}
           event={editing === 'new' ? null : editing}
+          initialStart={editing === 'new' ? newStart : null}
           onOpenMessage={onOpenMessage}
           onClose={() => setEditing(null)}
           onChanged={() => void qc.invalidateQueries({ queryKey: ['calendar'] })}
