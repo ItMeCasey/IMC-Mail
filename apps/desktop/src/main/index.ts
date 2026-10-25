@@ -1,8 +1,8 @@
 import appIcon from '../../build/icon.ico?asset'
-import { app, BrowserWindow, dialog, globalShortcut, nativeImage, Notification, protocol, shell } from 'electron'
+import { app, BrowserWindow, Menu, Tray, dialog, globalShortcut, nativeImage, Notification, protocol, shell } from 'electron'
 import { execFile } from 'node:child_process'
 import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { basename, join } from 'node:path'
 import { oauthProviders, type Account, type NotificationSettings } from '@imc/core'
@@ -10,11 +10,14 @@ import { Credentials } from './credentials'
 import { brandFrom } from './deals'
 import { openDb, type Db } from './db'
 import { emit, registerIpc } from './ipc'
-import { cleanFolderName, dealsToCsv, PROTECTED_ROLES } from '@imc/core'
+import { cleanFolderName, dealsToCsv, isAllowedRelayUrl, issueUrl, parseBackup, planImport, PROTECTED_ROLES, REPORT_RELAY_URL, reportBody, type Backup } from '@imc/core'
 import { looksLikePdf, previewOf } from './preview'
 import { RuleEngine } from './rules'
 import { dealDeadlineFromEmail } from './deal-deadline'
 import { BadgeController, badgePng } from './badge'
+import { closeAction, trayTooltip } from './tray'
+import { CrashLog } from './crashlog'
+import { Updater } from './updater'
 import { CalendarService } from './calendar'
 import { ComposeService, SmtpMailer } from './compose'
 import { MessageService } from './messages'
@@ -45,7 +48,41 @@ protocol.registerSchemesAsPrivileged([
 const safeFilename = (name: string): string =>
   basename(name).replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').slice(0, 150) || 'attachment'
 
+let closeToTray = false
+let quitting = false
+let tray: Tray | null = null
+let updater: Updater | null = null
+
+/** Brings the window back from the tray, the taskbar or behind other windows. */
+function showMainWindow(): void {
+  const w = BrowserWindow.getAllWindows()[0]
+  if (!w) return
+  if (w.isMinimized()) w.restore()
+  w.show()
+  w.focus()
+}
+
+// Only one copy runs; opening it again brings the first one forward (it may be sitting in the tray).
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  app.on('second-instance', showMainWindow)
+}
+
 const windowState: { maximized: boolean; saved: Electron.Rectangle | null } = { maximized: false, saved: null }
+/** Maximizes, or puts the window back to the size it had. A transparent window is sized by hand. */
+function setMaximized(w: BrowserWindow, on: boolean): void {
+  if (on && !windowState.maximized) {
+    windowState.saved = w.getBounds()
+    w.maximize()
+    reportMaximized(true)
+  } else if (!on && windowState.maximized) {
+    if (windowState.saved) w.setBounds(windowState.saved)
+    else w.unmaximize()
+    reportMaximized(false)
+  }
+}
+
 function reportMaximized(m: boolean): void {
   windowState.maximized = m
   emit('window:state', { maximized: m })
@@ -75,7 +112,19 @@ function createWindow(): void {
 
   win.setContentProtection(!!streamSafe && streamSafe.state.active && streamSafe.state.hideFromCapture)
   win.once('ready-to-show', () => win.show())
+  // With "keep running in the tray" on, the close button hides the window instead of quitting.
+  win.on('close', (e) => {
+    if (closeAction({ closeToTray, quitting }) === 'hide') {
+      e.preventDefault()
+      win.hide()
+    }
+  })
   // A transparent window cannot be maximized by the OS, so Electron sets its bounds; tell the page so it can square its corners.
+  // Double-clicking the title bar: Windows sends WM_NCLBUTTONDBLCLK for the drag area, and a
+  // transparent window ignores it by itself, so do what a title bar does.
+  if (process.platform === 'win32') {
+    win.hookWindowMessage(0x00a3, () => setMaximized(win, !windowState.maximized))
+  }
   win.on('maximize', () => reportMaximized(true))
   win.on('unmaximize', () => reportMaximized(false))
 
@@ -96,6 +145,20 @@ function createWindow(): void {
 }
 
 const publicAccount = ({ config: _config, ...account }: AccountRow): Account => account
+
+let crashLog: CrashLog | null = null
+process.on('uncaughtException', (e) => {
+  crashLog?.add('error', e)
+  console.error('[uncaught]', e)
+})
+process.on('unhandledRejection', (e) => {
+  crashLog?.add('rejection', e)
+  console.error('[unhandled rejection]', e)
+})
+app.on('render-process-gone', (_e, _wc, d) => crashLog?.add('renderer-gone', { message: `Window process ended: ${d.reason}` }))
+app.on('child-process-gone', (_e, d) => {
+  if (d.reason !== 'clean-exit') crashLog?.add('process-gone', { message: `${d.type} process ended: ${d.reason}` })
+})
 
 app.whenReady().then(async () => {
   const userData = app.getPath('userData')
@@ -260,10 +323,45 @@ app.whenReady().then(async () => {
   }, 30_000)
   app.on('will-quit', () => clearInterval(followUpTimer))
   // Unread count on the taskbar (Windows overlay) or dock / launcher (macOS, Linux).
+  updater = new Updater({ packaged: app.isPackaged, onStatus: (st) => emit('update:changed', st) })
+  // A quiet check shortly after start, then every few hours while the app stays open.
+  setTimeout(() => updater?.check(), 15_000)
+  const updateTimer = setInterval(() => updater?.check(), 6 * 3600_000)
+  app.on('will-quit', () => clearInterval(updateTimer))
+  crashLog = new CrashLog(join(userData, 'crash-log.json'))
+  const reportParts = (note: string, includeErrors: boolean) => {
+    const crashes = includeErrors ? crashLog!.list().slice(-5) : []
+    const body = reportBody({ version: app.getVersion(), platform: process.platform, electron: process.versions.electron, note, crashes })
+    const title = crashes.length > 0 ? `Problem: ${crashes[crashes.length - 1]!.message.slice(0, 80)}` : 'Problem report'
+    return { title, body }
+  }
+  const seenCrashes = () => Number(readSettings()['crashesAskedAt'] ?? 0)
+  /** The relay's address, if one is set up and safe to use. */
+  const relayUrl = (): string | null => {
+    const url = process.env['IMC_REPORT_URL'] || REPORT_RELAY_URL
+    return url && isAllowedRelayUrl(url) ? url : null
+  }
+  closeToTray = readSettings()['closeToTray'] === true
+  tray = new Tray(nativeImage.createFromPath(appIcon))
+  tray.setToolTip(trayTooltip(0))
+  tray.on('click', () => {
+    const w = BrowserWindow.getAllWindows()[0]
+    if (w && w.isVisible() && !w.isMinimized()) w.hide()
+    else showMainWindow()
+  })
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: 'Open IMC-Mail', click: showMainWindow },
+      { label: 'Check mail now', click: () => store.listAccounts().forEach((a) => sync.resync(a.id)) },
+      { type: 'separator' },
+      { label: 'Quit', click: () => app.quit() }
+    ])
+  )
   badge = new BadgeController({
     count: () => store.inboxUnread(),
     hidden: () => streamSafe?.state.active ?? true,
     apply: (n) => {
+      tray?.setToolTip(trayTooltip(n))
       if (process.platform === 'win32') {
         const icon = n > 0 ? nativeImage.createFromBuffer(badgePng(n)) : null
         for (const w of BrowserWindow.getAllWindows()) {
@@ -464,15 +562,9 @@ app.whenReady().then(async () => {
       const w = BrowserWindow.getAllWindows()[0]
       if (!w) return
       if (action === 'minimize') w.minimize()
-      else if (action === 'maximize') {
-        if (!windowState.maximized) windowState.saved = w.getBounds()
-        w.maximize()
-        reportMaximized(true)
-      } else if (action === 'restore') {
-        if (windowState.saved) w.setBounds(windowState.saved)
-        else w.unmaximize()
-        reportMaximized(false)
-      } else w.close()
+      else if (action === 'maximize') setMaximized(w, true)
+      else if (action === 'restore') setMaximized(w, false)
+      else w.close()
     },
     'window:bounds': () => {
       const w = BrowserWindow.getAllWindows()[0]
@@ -483,6 +575,130 @@ app.whenReady().then(async () => {
       const w = BrowserWindow.getAllWindows()[0]
       if (!w || windowState.maximized) return
       w.setBounds({ x, y, width: Math.max(1000, width), height: Math.max(600, height) })
+    },
+    'settings:export': async () => {
+      const labels = store.listLabels()
+      const backup: Backup = {
+        app: 'IMC-Mail',
+        version: 1,
+        exportedAt: Date.now(),
+        labels: labels.map((l) => l.name),
+        rules: store.listRules().map((rule) => ({
+          name: rule.name,
+          enabled: rule.enabled,
+          match: rule.match,
+          actions: {
+            labelName: labels.find((l) => l.id === rule.actions.labelId)?.name ?? null,
+            category: rule.actions.category,
+            markRead: rule.actions.markRead,
+            star: rule.actions.star,
+            archive: rule.actions.archive
+          }
+        })),
+        savedSearches: store.listSavedSearches().map((q) => ({ name: q.name, query: q.query })),
+        templates: templates.list().map((t) => ({ name: t.name, subject: t.subject, html: t.html })),
+        notifications: notificationSettings,
+        closeToTray
+      }
+      const target = await dialog.showSaveDialog({
+        defaultPath: join(app.getPath('documents'), 'imc-mail-settings.json'),
+        filters: [{ name: 'IMC-Mail settings', extensions: ['json'] }]
+      })
+      if (target.canceled || !target.filePath) return { saved: null }
+      await writeFile(target.filePath, JSON.stringify(backup, null, 2), 'utf8')
+      return { saved: target.filePath }
+    },
+    'settings:import': async () => {
+      const pick = await dialog.showOpenDialog({ title: 'Choose a settings file', properties: ['openFile'], filters: [{ name: 'IMC-Mail settings', extensions: ['json'] }] })
+      if (pick.canceled || !pick.filePaths[0]) return null
+      const file = pick.filePaths[0]
+      if ((await stat(file)).size > 5_000_000) throw new Error('That file is too large to be a settings backup.')
+      const parsed = parseBackup(await readFile(file, 'utf8'))
+      if (!parsed.ok) throw new Error(parsed.error)
+      const b = parsed.backup
+      const plan = planImport(
+        {
+          labels: store.listLabels().map((l) => l.name),
+          rules: store.listRules().map((x) => x.name),
+          savedSearchQueries: store.listSavedSearches().map((q) => q.query),
+          templates: templates.list().map((t) => t.name)
+        },
+        b
+      )
+      for (const name of plan.labels) store.createLabel(name)
+      // Rules may use any label in the file, including ones you already had.
+      const labelId = (name: string | null) => (name ? (store.listLabels().find((l) => l.name.toLowerCase() === name.toLowerCase())?.id ?? null) : null)
+      for (const rule of plan.rules) {
+        store.saveRule({
+          name: rule.name,
+          enabled: rule.enabled,
+          match: rule.match,
+          actions: { labelId: labelId(rule.actions.labelName), category: rule.actions.category, markRead: rule.actions.markRead, star: rule.actions.star, archive: rule.actions.archive }
+        })
+      }
+      for (const q of plan.savedSearches) store.saveSearch(q.name, q.query)
+      for (const t of plan.templates) await templates.save({ name: t.name, subject: t.subject, html: t.html, attachments: [] })
+      let settingsApplied = false
+      if (b.notifications) {
+        notificationSettings = b.notifications
+        writeFileSync(settingsFile, JSON.stringify({ ...readSettings(), notifications: notificationSettings }, null, 2))
+        settingsApplied = true
+      }
+      if (b.closeToTray !== undefined) {
+        closeToTray = b.closeToTray
+        writeFileSync(settingsFile, JSON.stringify({ ...readSettings(), closeToTray }, null, 2))
+        settingsApplied = true
+      }
+      return {
+        added: { labels: plan.labels.length, rules: plan.rules.length, savedSearches: plan.savedSearches.length, templates: plan.templates.length },
+        skipped: plan.skipped,
+        settingsApplied
+      }
+    },
+    'report:summary': () => {
+      const all = crashLog?.list() ?? []
+      return { errors: all.length, hasNew: all.some((c) => c.at > seenCrashes()), relay: relayUrl() !== null }
+    },
+    'report:preview': ({ note, includeErrors }) => reportParts(note, includeErrors),
+    'report:send': async ({ note, includeErrors }) => {
+      const url = relayUrl()
+      if (!url) throw new Error('Sending reports is not set up yet. Use "Open on GitHub" instead.')
+      const { title, body } = reportParts(note, includeErrors)
+      let res: Response
+      try {
+        res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title, body, version: app.getVersion(), platform: process.platform }),
+          signal: AbortSignal.timeout(15_000)
+        })
+      } catch {
+        throw new Error('Could not reach the report server. Check your connection, or use "Open on GitHub" instead.')
+      }
+      const out = (await res.json().catch(() => null)) as { ok?: boolean; url?: string; duplicate?: boolean; error?: string } | null
+      if (!res.ok || !out?.ok || !out.url) throw new Error(out?.error ?? `The report server answered ${res.status}.`)
+      writeFileSync(settingsFile, JSON.stringify({ ...readSettings(), crashesAskedAt: Date.now() }, null, 2))
+      return { url: out.url, duplicate: out.duplicate === true }
+    },
+    'report:open': async ({ note, includeErrors }) => {
+      const { title, body } = reportParts(note, includeErrors)
+      writeFileSync(settingsFile, JSON.stringify({ ...readSettings(), crashesAskedAt: Date.now() }, null, 2))
+      await shell.openExternal(issueUrl(title, body))
+    },
+    'report:dismiss': () => {
+      writeFileSync(settingsFile, JSON.stringify({ ...readSettings(), crashesAskedAt: Date.now() }, null, 2))
+    },
+    'update:status': () => updater?.status ?? { state: 'unsupported', message: 'Updates are not available.' },
+    'update:check': () => {
+      updater?.check()
+    },
+    'update:install': () => {
+      updater?.install()
+    },
+    'app:prefs': () => ({ closeToTray }),
+    'app:setPrefs': (p) => {
+      closeToTray = p.closeToTray
+      writeFileSync(settingsFile, JSON.stringify({ ...readSettings(), closeToTray }, null, 2))
     },
     'labels:list': () => store.listLabels(),
     'labels:create': ({ name }) => store.createLabel(name),
@@ -654,6 +870,10 @@ app.whenReady().then(async () => {
       badge?.reset()
     }
   })
+})
+
+app.on('before-quit', () => {
+  quitting = true
 })
 
 app.on('window-all-closed', () => {

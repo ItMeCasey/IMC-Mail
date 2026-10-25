@@ -390,6 +390,17 @@ export const savedSearchSchema = z.object({
 })
 export type SavedSearch = z.infer<typeof savedSearchSchema>
 
+export const updateStatusSchema = z.discriminatedUnion('state', [
+  z.object({ state: z.literal('unsupported'), message: z.string() }),
+  z.object({ state: z.literal('idle') }),
+  z.object({ state: z.literal('checking') }),
+  z.object({ state: z.literal('none') }),
+  z.object({ state: z.literal('available'), version: z.string() }),
+  z.object({ state: z.literal('downloaded'), version: z.string() }),
+  z.object({ state: z.literal('error'), message: z.string() })
+])
+export type UpdateStatus = z.infer<typeof updateStatusSchema>
+
 export const labelSchema = z.object({
   id: z.string(),
   name: z.string(),

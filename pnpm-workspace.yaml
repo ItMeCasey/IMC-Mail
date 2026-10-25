@@ -1,6 +1,7 @@
 packages:
   - apps/*
   - packages/*
+  - services/*
 
 # Dependencies allowed to run install scripts (everything else stays blocked).
 allowBuilds:

@@ -1,0 +1,11 @@
+{
+  "name": "@imc/report-relay",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Receives problem reports from IMC-Mail and files them as GitHub issues",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test"
+  }
+}

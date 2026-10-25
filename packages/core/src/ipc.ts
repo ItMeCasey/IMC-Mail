@@ -11,6 +11,7 @@ import {
   attachmentPreviewSchema,
   labelSchema,
   savedSearchSchema,
+  updateStatusSchema,
   mediaKitSchema,
   ruleInputSchema,
   ruleSchema,
@@ -385,6 +386,49 @@ export const ipcContract = {
     input: z.object({ x: z.number(), y: z.number(), width: z.number(), height: z.number() }),
     output: z.undefined()
   },
+  /** Saves your labels, rules, saved searches, reply templates and notification choices to a file. No accounts or mail. */
+  'settings:export': { input: z.undefined(), output: z.object({ saved: z.string().nullable() }) },
+  /** Adds what a settings file has that you do not. null if you cancel. Importing twice changes nothing. */
+  'settings:import': {
+    input: z.undefined(),
+    output: z
+      .object({
+        added: z.object({ labels: z.number().int(), rules: z.number().int(), savedSearches: z.number().int(), templates: z.number().int() }),
+        skipped: z.number().int(),
+        settingsApplied: z.boolean()
+      })
+      .nullable()
+  },
+  /** Recent errors kept on this computer, and whether any are new since you were last asked about them. */
+  'report:summary': {
+    input: z.undefined(),
+    output: z.object({ errors: z.number().int(), hasNew: z.boolean(), relay: z.boolean() })
+  },
+  /** The exact title and text of the GitHub issue that would be opened. */
+  'report:preview': {
+    input: z.object({ note: z.string().max(5000), includeErrors: z.boolean() }),
+    output: z.object({ title: z.string(), body: z.string() })
+  },
+  /** Posts the report to the project's relay, which files it as a GitHub issue. Throws with a plain reason if it cannot. */
+  'report:send': {
+    input: z.object({ note: z.string().max(5000), includeErrors: z.boolean() }),
+    output: z.object({ url: z.string(), duplicate: z.boolean() })
+  },
+  /** Opens the pre-filled GitHub issue in your browser. You review and submit it there. */
+  'report:open': {
+    input: z.object({ note: z.string().max(5000), includeErrors: z.boolean() }),
+    output: z.undefined()
+  },
+  /** "Not now": stop asking about the errors seen so far. */
+  'report:dismiss': { input: z.undefined(), output: z.undefined() },
+  /** Where the update check stands. Updates come from the project's GitHub Releases. */
+  'update:status': { input: z.undefined(), output: updateStatusSchema },
+  'update:check': { input: z.undefined(), output: z.undefined() },
+  /** Restarts into a downloaded update. */
+  'update:install': { input: z.undefined(), output: z.undefined() },
+  /** App-wide choices kept on this computer. */
+  'app:prefs': { input: z.undefined(), output: z.object({ closeToTray: z.boolean() }) },
+  'app:setPrefs': { input: z.object({ closeToTray: z.boolean() }), output: z.undefined() },
   /** Your labels, with how many messages carry each. Labels live on this computer only. */
   'labels:list': { input: z.undefined(), output: z.array(labelSchema) },
   'labels:create': {
@@ -416,6 +460,7 @@ export const ipcEvents = {
   'outbox:changed': z.object({}),
   'streamsafe:changed': streamSafeStateSchema,
   'window:state': z.object({ maximized: z.boolean() }),
+  'update:changed': updateStatusSchema,
   /** A notification was clicked: open this message. */
   'notification:open': z.object({ messageId: z.string() })
 } as const

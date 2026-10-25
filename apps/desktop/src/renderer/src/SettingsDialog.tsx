@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { Bell, ListFilter, Plus, Trash2, X } from 'lucide-react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { Bell, Bug, Download, ListFilter, Plus, Trash2, Upload, X } from 'lucide-react'
 import type { Account, StreamSafeState } from '@imc/core'
 import StreamSafeControl from './StreamSafeControl'
 import ThemeSwitch from './ThemeSwitch'
@@ -69,6 +70,7 @@ export default function SettingsDialog({
   onAddAccount,
   onRules,
   onNotifications,
+  onReport,
   onClose
 }: {
   streamSafe: StreamSafeState
@@ -78,8 +80,40 @@ export default function SettingsDialog({
   onAddAccount: () => void
   onRules: () => void
   onNotifications: () => void
+  onReport: () => void
   onClose: () => void
 }) {
+  const qc = useQueryClient()
+  const [backupNote, setBackupNote] = useState<string | null>(null)
+  const info = useQuery({ queryKey: ['appinfo'], queryFn: () => window.imc.invoke('app:info') })
+  const update = useQuery({ queryKey: ['update'], queryFn: () => window.imc.invoke('update:status') })
+  useEffect(() => window.imc.on('update:changed', (st) => qc.setQueryData(['update'], st)), [qc])
+  const u = update.data
+  const updateText =
+    !u || u.state === 'idle'
+      ? 'Checked automatically while the app runs.'
+      : u.state === 'unsupported'
+        ? u.message
+        : u.state === 'checking'
+          ? 'Checking…'
+          : u.state === 'none'
+            ? 'You have the latest version.'
+            : u.state === 'available'
+              ? `Version ${u.version} is downloading.`
+              : u.state === 'downloaded'
+                ? `Version ${u.version} is ready. It also installs when you quit.`
+                : `Could not check: ${u.message}`
+  /** Runs an export or import and shows what happened, or why it could not. */
+  const run = async (fn: () => Promise<string | null>) => {
+    setBackupNote(null)
+    try {
+      setBackupNote(await fn())
+      void qc.invalidateQueries()
+    } catch (e) {
+      setBackupNote((e instanceof Error ? e.message : String(e)).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''))
+    }
+  }
+  const prefs = useQuery({ queryKey: ['prefs'], queryFn: () => window.imc.invoke('app:prefs') })
   const dialog = useRef<HTMLDialogElement>(null)
   useEffect(() => {
     dialog.current?.showModal()
@@ -119,6 +153,23 @@ export default function SettingsDialog({
           <ThemeSwitch />
         </Section>
 
+        <Section title="Window">
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={prefs.data?.closeToTray ?? false}
+              onChange={(e) =>
+                void window.imc.invoke('app:setPrefs', { closeToTray: e.target.checked }).then(() => qc.invalidateQueries({ queryKey: ['prefs'] }))
+              }
+            />
+            <span>
+              Keep running in the system tray when I close the window
+              <span className="block text-xs text-ink-3">Mail keeps syncing and notifications keep coming. Quit from the tray icon.</span>
+            </span>
+          </label>
+        </Section>
+
         <Section title="Mail">
           <button className={row} onClick={go(onNotifications)}>
             <Bell size={16} strokeWidth={1.75} aria-hidden />
@@ -128,6 +179,64 @@ export default function SettingsDialog({
             <ListFilter size={16} strokeWidth={1.75} aria-hidden />
             Rules
           </button>
+        </Section>
+
+        <Section title="Help">
+          <button className={row} onClick={go(onReport)}>
+            <Bug size={16} strokeWidth={1.75} aria-hidden />
+            Report a problem
+          </button>
+        </Section>
+
+        <Section title="Updates">
+          <p className="text-sm text-ink-2">
+            Version <span className="num">{info.data?.version ?? ''}</span>. {updateText}
+          </p>
+          <div className="flex gap-2">
+            {update.data?.state === 'downloaded' ? (
+              <button className={row} onClick={() => void window.imc.invoke('update:install')}>
+                Restart to update
+              </button>
+            ) : (
+              <button
+                className={row}
+                disabled={update.data?.state === 'unsupported' || update.data?.state === 'checking'}
+                onClick={() => void window.imc.invoke('update:check')}
+              >
+                Check for updates
+              </button>
+            )}
+          </div>
+        </Section>
+
+        <Section title="Back up settings">
+          <p className="text-sm text-ink-3">Labels, rules, saved searches, reply templates and notification choices. No accounts, passwords or mail.</p>
+          <div className="flex gap-2">
+            <button className={row} onClick={() => void run(() => window.imc.invoke('settings:export').then((x) => (x.saved ? `Saved to ${x.saved}` : null)))}>
+              <Download size={16} strokeWidth={1.75} aria-hidden />
+              Export
+            </button>
+            <button
+              className={row}
+              onClick={() =>
+                void run(async () => {
+                  const x = await window.imc.invoke('settings:import')
+                  if (!x) return null
+                  const a = x.added
+                  const n = a.labels + a.rules + a.savedSearches + a.templates
+                  return `Added ${a.labels} labels, ${a.rules} rules, ${a.savedSearches} saved searches, ${a.templates} templates${x.settingsApplied ? ', and applied the settings in the file' : ''}.${x.skipped > 0 ? ` ${x.skipped} you already had were left alone.` : ''}${n === 0 && !x.settingsApplied ? ' Nothing new in that file.' : ''}`
+                })
+              }
+            >
+              <Upload size={16} strokeWidth={1.75} aria-hidden />
+              Import
+            </button>
+          </div>
+          {backupNote && (
+            <p role="status" className="text-sm break-words text-ink-2">
+              {backupNote}
+            </p>
+          )}
         </Section>
 
         <Section title="Manage accounts">

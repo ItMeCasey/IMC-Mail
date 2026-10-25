@@ -10,6 +10,7 @@ import WindowFrame from './WindowFrame'
 import type { BulkAction } from './BulkBar'
 import RulesDialog from './RulesDialog'
 import FolderNameDialog from './FolderNameDialog'
+import ReportDialog from './ReportDialog'
 import SettingsDialog from './SettingsDialog'
 import NotificationSettingsDialog from './NotificationSettings'
 import AddAccount from './AddAccount'
@@ -61,6 +62,7 @@ function Shell() {
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const anchor = useRef<string | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [reporting, setReporting] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [undo, setUndo] = useState<UndoMove | null>(null)
   const [scheduledOpen, setScheduledOpen] = useState(false)
@@ -122,6 +124,25 @@ function Shell() {
       }),
     []
   )
+
+  // If the app logged an error since it last asked, offer to report it (once; "Not now" stops the asking).
+  useEffect(() => {
+    let cancelled = false
+    void window.imc.invoke('report:summary').then(async (r) => {
+      if (cancelled || !r.hasNew) return
+      const yes = await askConfirm({
+        title: 'IMC-Mail ran into a problem',
+        message: 'The app logged an error. You can report it on GitHub; you will see everything that would be included before anything is sent.',
+        confirmLabel: 'Review report',
+        cancelLabel: 'Not now'
+      })
+      if (yes) setReporting(true)
+      else void window.imc.invoke('report:dismiss')
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   // The gear in the title bar (outside this component) asks for the settings panel.
   useEffect(() => {
@@ -438,10 +459,37 @@ function Shell() {
     }
   }
 
+  // With messages ticked: e archive, # delete, ! junk, Shift+I mark read, Shift+U mark unread.
+  // Ctrl+A ticks every message in the list. Never while typing or while stream-safe mode hides things.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (composer || adding || draftsOpen || hide || calendar || board) return
+      const t = e.target as HTMLElement | null
+      if (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)) return
+      if (document.querySelector('dialog[open]')) return
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a' && (listData?.length ?? 0) > 0) {
+        e.preventDefault()
+        setChecked(new Set((listData ?? []).map((m) => m.id)))
+        return
+      }
+      if (checked.size === 0 || e.ctrlKey || e.metaKey || e.altKey) return
+      const k = e.key
+      const action: BulkAction | null =
+        k === 'e' ? 'archive' : k === '#' || k === 'Delete' ? 'trash' : k === '!' ? 'junk' : k === 'I' ? 'read' : k === 'U' ? 'unread' : null
+      if (!action) return
+      e.preventDefault()
+      void bulk(action)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [checked, listData, composer, adding, draftsOpen, hide, calendar, board])
+
   // Keyboard: e archive, # delete, ! junk, r reply. Never while typing or while hidden.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!openId || composer || adding || draftsOpen || hide) return
+      // Ticked messages have their own handler above.
+      if (!openId || composer || adding || draftsOpen || hide || checked.size > 0) return
       if (e.ctrlKey || e.metaKey || e.altKey) return
       const t = e.target as HTMLElement | null
       if (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)) return
@@ -457,7 +505,7 @@ function Shell() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openId, composer, adding, draftsOpen, hide, listData, folders.data, selection, debounced])
+  }, [openId, composer, adding, draftsOpen, hide, listData, folders.data, selection, debounced, checked])
 
   const openBoard = () => {
     setOpenId(null)
@@ -734,6 +782,7 @@ function Shell() {
           onClose={() => setRenaming(null)}
         />
       )}
+      {reporting && <ReportDialog onClose={() => setReporting(false)} />}
       {settingsOpen && (
         <SettingsDialog
           streamSafe={stream}
@@ -752,6 +801,7 @@ function Shell() {
           onAddAccount={() => (hide ? blocked() : setAdding(true))}
           onRules={() => (hide ? blocked() : setRulesOpen(true))}
           onNotifications={() => setNotifOpen(true)}
+          onReport={() => setReporting(true)}
           onClose={() => setSettingsOpen(false)}
         />
       )}
