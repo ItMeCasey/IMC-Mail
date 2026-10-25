@@ -12,6 +12,7 @@ win:
   target:
     - nsis
 nsis:
+  artifactName: IMC-Mail-Setup-${version}.${ext}
   oneClick: false
   allowToChangeInstallationDirectory: true
 npmRebuild: false
