@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { CATEGORY_LABELS, categorySchema, type Category, type NotificationSettings } from '@imc/core'
+import { useStreamerFeatures } from './hooks'
 
 const time =
   'h-8 rounded-md border border-line-strong bg-sheet px-2 text-ink num focus-visible:border-accent focus-visible:outline-offset-0 disabled:opacity-50'
 
 export default function NotificationSettingsDialog({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient()
+  const streamer = useStreamerFeatures()
   const dialog = useRef<HTMLDialogElement>(null)
   const [test, setTest] = useState<string | null>(null)
   const settings = useQuery({
@@ -51,6 +53,7 @@ export default function NotificationSettingsDialog({ onClose }: { onClose: () =>
               <span className="font-medium">Notify me about new mail</span>
             </label>
 
+            {streamer && (
             <fieldset disabled={!s.enabled} className="space-y-2 disabled:opacity-50">
               <legend className="mb-1 text-sm text-ink-2">Only for these kinds of mail</legend>
               <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
@@ -63,6 +66,7 @@ export default function NotificationSettingsDialog({ onClose }: { onClose: () =>
               </div>
               <p className="text-xs text-ink-3">Likely scams never notify.</p>
             </fieldset>
+            )}
 
             <fieldset disabled={!s.enabled} className="space-y-2 disabled:opacity-50">
               <legend className="mb-1 text-sm text-ink-2">Quiet hours</legend>
@@ -93,6 +97,7 @@ export default function NotificationSettingsDialog({ onClose }: { onClose: () =>
               </label>
             </fieldset>
 
+            {streamer && (
             <fieldset disabled={!s.enabled} className="space-y-1 disabled:opacity-50">
               <legend className="mb-1 text-sm text-ink-2">While stream-safe mode is on</legend>
               {(
@@ -116,6 +121,7 @@ export default function NotificationSettingsDialog({ onClose }: { onClose: () =>
                 </label>
               ))}
             </fieldset>
+            )}
 
             <div className="flex items-center gap-3">
               <button

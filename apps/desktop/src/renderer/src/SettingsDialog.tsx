@@ -114,6 +114,7 @@ export default function SettingsDialog({
     }
   }
   const prefs = useQuery({ queryKey: ['prefs'], queryFn: () => window.imc.invoke('app:prefs') })
+  const streamer = prefs.data?.streamerFeatures ?? true
   const dialog = useRef<HTMLDialogElement>(null)
   useEffect(() => {
     dialog.current?.showModal()
@@ -145,9 +146,33 @@ export default function SettingsDialog({
           </button>
         </div>
 
-        <Section title="Stream-safe mode">
-          <StreamSafeControl state={streamSafe} inline />
+        <Section title="Streamer features">
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={streamer}
+              onChange={(e) =>
+                void window.imc.invoke('app:setPrefs', { streamerFeatures: e.target.checked }).then(() => {
+                  void qc.invalidateQueries({ queryKey: ['prefs'] })
+                  void qc.invalidateQueries({ queryKey: ['streamsafe'] })
+                })
+              }
+            />
+            <span>
+              Show tools for streamers and creators
+              <span className="block text-xs text-ink-3">
+                Stream-safe mode, the sponsorship board, mail categories and the media kit. Turn this off to use IMC-Mail as an ordinary mail client.
+              </span>
+            </span>
+          </label>
         </Section>
+
+        {streamer && (
+          <Section title="Stream-safe mode">
+            <StreamSafeControl state={streamSafe} inline />
+          </Section>
+        )}
 
         <Section title="Appearance">
           <ThemeSwitch />

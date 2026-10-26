@@ -48,7 +48,7 @@ import { Private, priv } from './streamsafe'
 import AccountMenu from './AccountMenu'
 import FolderMenu from './FolderMenu'
 import { folderRows } from './folderTree'
-import type { Selection } from './hooks'
+import { useStreamerFeatures, type Selection } from './hooks'
 import { tapeColor } from './tape'
 
 const ROLE_ICON: Record<FolderRole, LucideIcon> = {
@@ -162,6 +162,7 @@ export default function Sidebar({
     folders.filter((f) => f.accountId === accountId && f.role === 'inbox').reduce((n, f) => n + f.unread, 0)
   const unifiedUnread = folders.filter((f) => f.role === 'inbox').reduce((n, f) => n + f.unread, 0)
   const hide = streamSafe.active
+  const streamer = useStreamerFeatures()
   const isUnified =
     !boardActive && !calendarActive && !selection.accountId && !selection.folderId && !selection.view && !selection.category && !selection.labelId
 
@@ -245,12 +246,14 @@ export default function Sidebar({
             <CalendarDays {...iconProps} />
             <span className="flex-1">Calendar</span>
           </button>
-          <button className={row(boardActive)} aria-current={boardActive ? 'page' : undefined} onClick={onBoard}>
-            <Briefcase {...iconProps} />
-            <span className="flex-1">Sponsorship board</span>
-            {dealCount > 0 && <span className="num min-w-6 text-right text-sm text-ink-2">{dealCount}</span>}
-          </button>
-          {CATEGORY_ORDER.map((c) => {
+          {streamer && (
+            <button className={row(boardActive)} aria-current={boardActive ? 'page' : undefined} onClick={onBoard}>
+              <Briefcase {...iconProps} />
+              <span className="flex-1">Sponsorship board</span>
+              {dealCount > 0 && <span className="num min-w-6 text-right text-sm text-ink-2">{dealCount}</span>}
+            </button>
+          )}
+          {(streamer ? CATEGORY_ORDER : []).map((c) => {
             const n = counts?.categories.find((x) => x.category === c)
             if (!n || n.total === 0) return null
             const Icon = CATEGORY_ICON[c]!

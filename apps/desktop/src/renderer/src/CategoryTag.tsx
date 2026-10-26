@@ -1,4 +1,5 @@
 import { CATEGORY_LABELS, type Category } from '@imc/core'
+import { useStreamerFeatures } from './hooks'
 import { Private } from './streamsafe'
 
 /**
@@ -12,7 +13,8 @@ export default function CategoryTag({
   category: Category
   hide?: boolean
 }) {
-  if (category === 'other') return null
+  const streamer = useStreamerFeatures()
+  if (category === 'other' || !streamer) return null
   return (
     <span className="shrink-0 rounded-sm border border-line-strong px-1.5 text-xs leading-4 text-ink-2">
       {hide ? <Private active>{CATEGORY_LABELS[category]}</Private> : CATEGORY_LABELS[category]}

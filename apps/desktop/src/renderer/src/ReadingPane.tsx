@@ -37,7 +37,7 @@ import {
 import EmailFrame from './EmailFrame'
 import InviteCard from './InviteCard'
 import LabelMenu from './LabelMenu'
-import { useLabels } from './hooks'
+import { useLabels, useStreamerFeatures } from './hooks'
 import PreviewDialog from './PreviewDialog'
 import FollowUpMenu from './FollowUpMenu'
 import SnoozeMenu from './SnoozeMenu'
@@ -324,6 +324,7 @@ export default function ReadingPane({
   const permanent = here?.role === 'trash' || here?.role === 'junk'
   const targets = folders.filter((f) => f.accountId === selected?.accountId && f.id !== selected?.folderId)
   const [moveOpen, setMoveOpen] = useState(false)
+  const streamer = useStreamerFeatures()
   const [catOpen, setCatOpen] = useState(false)
   const catRoot = useRef<HTMLSpanElement>(null)
   useEffect(() => {
@@ -390,7 +391,7 @@ export default function ReadingPane({
                 </span>
               ) : null
             })}
-            {selected && (
+            {selected && streamer && (
               <span ref={catRoot} className="relative">
                 <button
                   type="button"
@@ -450,14 +451,16 @@ export default function ReadingPane({
             <button className={iconBtn} aria-label="Forward" title="Forward" onClick={() => onReply(selected.id, 'forward')}>
               <Forward size={16} strokeWidth={1.75} aria-hidden />
             </button>
-            <button
-              className={iconBtn}
-              aria-label="Track as deal"
-              title="Track as sponsorship deal"
-              onClick={() => onTrackDeal(selected.id)}
-            >
-              <Handshake size={16} strokeWidth={1.75} aria-hidden />
-            </button>
+            {streamer && (
+              <button
+                className={iconBtn}
+                aria-label="Track as deal"
+                title="Track as sponsorship deal"
+                onClick={() => onTrackDeal(selected.id)}
+              >
+                <Handshake size={16} strokeWidth={1.75} aria-hidden />
+              </button>
+            )}
             <span className="mx-1 h-5 w-px bg-line" aria-hidden />
             <button
               className={iconBtn}

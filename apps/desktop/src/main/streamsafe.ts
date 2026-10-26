@@ -65,6 +65,8 @@ export class StreamSafeController {
   private override: boolean | null = null
   private timer: NodeJS.Timeout | null = null
   private last = ''
+  /** False when streamer features are switched off: nothing is ever hidden and nothing is watched. */
+  private enabled = true
 
   constructor(
     private deps: {
@@ -81,7 +83,7 @@ export class StreamSafeController {
 
   get state(): StreamSafeState {
     return {
-      active: isActive(this.settings.mode, this.detected, this.override),
+      active: this.enabled && isActive(this.settings.mode, this.detected, this.override),
       mode: this.settings.mode,
       overridden: this.override !== null,
       detected: this.detected,
@@ -100,6 +102,7 @@ export class StreamSafeController {
 
   /** Looks for streaming software. A change in what is running clears the hotkey override. */
   async poll(): Promise<void> {
+    if (!this.enabled) return
     let found: string | null = null
     try {
       found = detectStreaming(await this.deps.listProcesses(), this.settings.watch)
@@ -114,6 +117,7 @@ export class StreamSafeController {
 
   /** What the global hotkey does: flip the current state until streaming software starts or stops. */
   toggle(): StreamSafeState {
+    if (!this.enabled) return this.state
     this.override = !this.state.active
     this.publish()
     return this.state
@@ -130,8 +134,23 @@ export class StreamSafeController {
     return this.state
   }
 
+  /** Turns the whole feature on or off. Off means no detection, no hotkey and never active. */
+  setEnabled(on: boolean): StreamSafeState {
+    if (this.enabled === on) return this.state
+    this.enabled = on
+    this.override = null
+    if (on) {
+      this.start()
+    } else {
+      this.stop()
+      this.detected = null
+    }
+    this.publish()
+    return this.state
+  }
+
   start(): void {
-    if (this.timer) return
+    if (this.timer || !this.enabled) return
     void this.poll()
     this.timer = setInterval(() => void this.poll(), this.deps.pollMs ?? 5000)
     this.publish()

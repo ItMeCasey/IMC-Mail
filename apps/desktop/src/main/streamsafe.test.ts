@@ -103,6 +103,20 @@ describe('StreamSafeController', () => {
     expect(t.c.state.active).toBe(true)
   })
 
+  it('switched off, it is never active, ignores the hotkey, and stops watching', async () => {
+    const t = make({ mode: 'on' })
+    expect(t.c.state.active).toBe(true)
+    t.c.setEnabled(false)
+    expect(t.c.state.active).toBe(false)
+    expect(t.c.toggle().active).toBe(false)
+    t.setRunning(['obs64.exe'])
+    await t.c.poll()
+    expect(t.c.state.detected).toBeNull()
+    t.c.setEnabled(true)
+    expect(t.c.state.active).toBe(true)
+    t.c.stop()
+  })
+
   it('keeps its last answer when the process list cannot be read', async () => {
     const onChange = vi.fn()
     let fail = false

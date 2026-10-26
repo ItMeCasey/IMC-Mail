@@ -427,8 +427,12 @@ export const ipcContract = {
   /** Restarts into a downloaded update. */
   'update:install': { input: z.undefined(), output: z.undefined() },
   /** App-wide choices kept on this computer. */
-  'app:prefs': { input: z.undefined(), output: z.object({ closeToTray: z.boolean() }) },
-  'app:setPrefs': { input: z.object({ closeToTray: z.boolean() }), output: z.undefined() },
+  'app:prefs': { input: z.undefined(), output: z.object({ closeToTray: z.boolean(), streamerFeatures: z.boolean() }) },
+  /** `streamerFeatures` off hides stream-safe mode, the sponsorship board and mail categories: a plain mail client. */
+  'app:setPrefs': {
+    input: z.object({ closeToTray: z.boolean().optional(), streamerFeatures: z.boolean().optional() }),
+    output: z.undefined()
+  },
   /** Your labels, with how many messages carry each. Labels live on this computer only. */
   'labels:list': { input: z.undefined(), output: z.array(labelSchema) },
   'labels:create': {

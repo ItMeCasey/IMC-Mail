@@ -76,5 +76,13 @@ export const useLabels = () =>
 export const useSavedSearches = () =>
   useQuery({ queryKey: ['searches'], queryFn: () => window.imc.invoke('searches:list') })
 
+/**
+ * False when the user turned streamer features off in Settings: no stream-safe mode, sponsorship
+ * board, media kit or mail categories, so the app reads as an ordinary mail client. On until the
+ * saved choice arrives, so a streamer never sees their tools flicker away.
+ */
+export const useStreamerFeatures = (): boolean =>
+  useQuery({ queryKey: ['prefs'], queryFn: () => window.imc.invoke('app:prefs') }).data?.streamerFeatures ?? true
+
 export const useMediaKit = () =>
   useQuery({ queryKey: ['mediakit'], queryFn: () => window.imc.invoke('mediaKit:get') })

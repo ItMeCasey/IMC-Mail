@@ -28,7 +28,7 @@ import {
   type DraftAttachment,
   type Template
 } from '@imc/core'
-import { useMediaKit } from './hooks'
+import { useMediaKit, useStreamerFeatures } from './hooks'
 import { ScheduleMenu, TemplatesMenu } from './ComposerMenus'
 import RecipientInput, { isValidRecipient } from './RecipientInput'
 import { tapeColor } from './tape'
@@ -166,6 +166,7 @@ export default function Composer({
   }, [accountId, to, cc, bcc, subject, html, attachments])
 
   const mediaKit = useMediaKit()
+  const streamer = useStreamerFeatures()
   const attachKit = async () => {
     let kit = mediaKit.data ?? null
     if (!kit) {
@@ -398,11 +399,13 @@ export default function Composer({
         <ToolButton label="Redo" Icon={Redo2} disabled={!editor?.can().redo()} onClick={() => editor?.chain().focus().redo().run()} />
         <span className="mx-1 h-5 w-px bg-line" aria-hidden />
         <ToolButton label="Attach files" Icon={Paperclip} onClick={() => void attach()} />
-        <ToolButton
-          label={mediaKit.data ? `Attach media kit (${mediaKit.data.filename})` : 'Choose and attach your media kit'}
-          Icon={FileText}
-          onClick={() => void attachKit()}
-        />
+        {streamer && (
+          <ToolButton
+            label={mediaKit.data ? `Attach media kit (${mediaKit.data.filename})` : 'Choose and attach your media kit'}
+            Icon={FileText}
+            onClick={() => void attachKit()}
+          />
+        )}
         <TemplatesMenu onPick={applyTemplate} onSaveAs={() => void saveAsTemplate()} />
       </div>
 

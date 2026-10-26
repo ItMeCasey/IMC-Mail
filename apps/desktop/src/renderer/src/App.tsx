@@ -34,6 +34,7 @@ import {
   useFolders,
   useMessages,
   useSearch,
+  useStreamerFeatures,
   useSyncInvalidation,
   useThread,
   type Selection
@@ -74,6 +75,13 @@ function Shell() {
   const deals = useDeals()
   const stream = useStreamSafe()
   const hide = stream.active
+  const streamer = useStreamerFeatures()
+  // Turning streamer features off while on the board or a mail-kind list moves back to the inbox view.
+  useEffect(() => {
+    if (streamer) return
+    setBoard(false)
+    setSelection((s) => (s.category ? { ...s, category: undefined } : s))
+  }, [streamer])
   const drafts = useDrafts()
   const messages = useMessages(selection)
   const thread = useThread(openId)
@@ -552,6 +560,7 @@ function Shell() {
   }
 
   /** What the palette offers. Names of accounts, folders, labels and searches stay out while stream-safe mode is on. */
+  const STREAMER_COMMANDS = ['kit', 'ss', 'g-board']
   const commands: Command[] = [
     { id: 'compose', label: 'Compose a new message', group: 'Action', run: newMessage },
     { id: 'settings', label: 'Open settings', group: 'Action', run: () => setSettingsOpen(true) },
@@ -751,7 +760,7 @@ function Shell() {
       {scheduledOpen && (
         <ScheduledDialog onEdit={openComposer} onClose={() => setScheduledOpen(false)} />
       )}
-      {paletteOpen && <CommandPalette commands={commands} onClose={() => setPaletteOpen(false)} />}
+      {paletteOpen && <CommandPalette commands={streamer ? commands : commands.filter((c) => !STREAMER_COMMANDS.includes(c.id))} onClose={() => setPaletteOpen(false)} />}
       {newFolder && !hide && (
         <FolderNameDialog
           title={newFolder.parent ? 'New subfolder' : 'New folder'}

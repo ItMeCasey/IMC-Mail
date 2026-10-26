@@ -24,6 +24,15 @@ describe('ipcContract', () => {
     expect(input.safeParse(acct('localhost', 'none')).success).toBe(true)
   })
 
+  it('saves one preference at a time, so turning streamer features off leaves the others alone', () => {
+    const { input, output } = ipcContract['app:setPrefs']
+    expect(input.safeParse({ streamerFeatures: false }).success).toBe(true)
+    expect(input.safeParse({ closeToTray: true }).success).toBe(true)
+    expect(input.safeParse({ streamerFeatures: 'no' }).success).toBe(false)
+    expect(output.safeParse(undefined).success).toBe(true)
+    expect(ipcContract['app:prefs'].output.safeParse({ closeToTray: false, streamerFeatures: true }).success).toBe(true)
+  })
+
   it('only accepts plain web addresses as a meeting link', () => {
     const { input } = ipcContract['calendar:schedule']
     const base = { summary: 'x', start: 1, end: 2, attendees: ['a@b.example'], accountId: 'a' }

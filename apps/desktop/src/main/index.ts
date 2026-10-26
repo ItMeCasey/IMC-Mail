@@ -5,7 +5,7 @@ import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { basename, join } from 'node:path'
-import { oauthProviders, type Account, type NotificationSettings } from '@imc/core'
+import { categorySchema, oauthProviders, type Account, type NotificationSettings } from '@imc/core'
 import { Credentials } from './credentials'
 import { brandFrom } from './deals'
 import { openDb, type Db } from './db'
@@ -49,6 +49,7 @@ const safeFilename = (name: string): string =>
   basename(name).replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').slice(0, 150) || 'attachment'
 
 let closeToTray = false
+let streamerFeatures = true
 let quitting = false
 let tray: Tray | null = null
 let updater: Updater | null = null
@@ -269,6 +270,8 @@ app.whenReady().then(async () => {
       emit('streamsafe:changed', state)
     }
   })
+  streamerFeatures = readSettings()['streamerFeatures'] !== false
+  if (!streamerFeatures) streamSafe.setEnabled(false)
   streamSafe.start()
 
   /** The saved media kit, if the file is still there. */
@@ -320,7 +323,8 @@ app.whenReady().then(async () => {
     }
   })
   notifier = new Notifier({
-    getSettings: () => notificationSettings,
+    // Without streamer features there are no mail kinds to choose from, so every kind notifies.
+    getSettings: () => (streamerFeatures ? notificationSettings : { ...notificationSettings, categories: [...categorySchema.options] }),
     streamActive: () => streamSafe?.state.active ?? true,
     load: (ids) => store.incoming(ids),
     loadSent: (ids) => store.sentItems(ids),
@@ -388,9 +392,16 @@ app.whenReady().then(async () => {
     }
   })
   badge.start()
-  if (!globalShortcut.register('CommandOrControl+Shift+L', () => streamSafe?.toggle())) {
-    console.warn('[stream-safe] Ctrl+Shift+L is taken by another app; use the sidebar control instead')
+  /** Streamer features (stream-safe mode, the sponsorship board, mail categories) on or off. Off is a plain mail client. */
+  const applyStreamerFeatures = (on: boolean): void => {
+    streamerFeatures = on
+    streamSafe?.setEnabled(on)
+    globalShortcut.unregister('CommandOrControl+Shift+L')
+    if (on && !globalShortcut.register('CommandOrControl+Shift+L', () => streamSafe?.toggle())) {
+      console.warn('[stream-safe] Ctrl+Shift+L is taken by another app; use the sidebar control instead')
+    }
   }
+  applyStreamerFeatures(streamerFeatures)
   let signInAbort: AbortController | null = null
 
   protocol.handle('imc-body', (req) => {
@@ -710,10 +721,11 @@ app.whenReady().then(async () => {
     'update:install': () => {
       updater?.install()
     },
-    'app:prefs': () => ({ closeToTray }),
+    'app:prefs': () => ({ closeToTray, streamerFeatures }),
     'app:setPrefs': (p) => {
-      closeToTray = p.closeToTray
-      writeFileSync(settingsFile, JSON.stringify({ ...readSettings(), closeToTray }, null, 2))
+      if (p.closeToTray !== undefined) closeToTray = p.closeToTray
+      if (p.streamerFeatures !== undefined) applyStreamerFeatures(p.streamerFeatures)
+      writeFileSync(settingsFile, JSON.stringify({ ...readSettings(), closeToTray, streamerFeatures }, null, 2))
     },
     'labels:list': () => store.listLabels(),
     'labels:create': ({ name }) => store.createLabel(name),
