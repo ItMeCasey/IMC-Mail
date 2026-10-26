@@ -3,6 +3,7 @@ import {
   accountSchema,
   calendarEventSchema,
   calendarOccurrenceSchema,
+  calendarSourceSchema,
   calendarResponseSchema,
   meetingInputSchema,
   categorySchema,
@@ -276,6 +277,15 @@ export const ipcContract = {
     input: z.object({ messageId: z.string(), response: calendarResponseSchema, comment: z.string().max(1000).optional() }),
     output: calendarEventSchema
   },
+  /** Which accounts can show their own calendar here, and how that is going. */
+  'calendar:sources': { input: z.undefined(), output: z.array(calendarSourceSchema) },
+  /** Opens the provider's page to allow calendar access, then reads the calendar. Resolves when that is done. */
+  'calendar:connect': {
+    input: z.object({ accountId: z.string() }),
+    output: z.object({ ok: z.boolean(), message: z.string().nullable() })
+  },
+  /** Reads the calendar again now (every connected account when no id is given). */
+  'calendar:syncNow': { input: z.object({ accountId: z.string().optional() }), output: z.undefined() },
   /** Meetings in a time range, repeating ones expanded. Declined and cancelled meetings are left out. */
   'calendar:list': {
     input: z.object({ from: z.number(), to: z.number() }),

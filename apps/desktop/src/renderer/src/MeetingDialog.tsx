@@ -1,7 +1,7 @@
 import { askConfirm } from './dialogs'
 import { useEffect, useRef, useState } from 'react'
 import { Download, Mail } from 'lucide-react'
-import type { Account, CalendarEvent } from '@imc/core'
+import { safeWebUrl, type Account, type CalendarEvent } from '@imc/core'
 import { whenText } from './InviteCard'
 import RecipientInput, { isValidRecipient } from './RecipientInput'
 import { fromLocalInput, toLocalInput } from './schedule'
@@ -46,7 +46,7 @@ export default function MeetingDialog({
     dialog.current?.showModal()
   }, [])
 
-  const editable = event === null || event.mine
+  const editable = event === null || (event.mine && !event.readOnly)
   const start0 = event?.start ?? initialStart ?? nextSlot()
   const [summary, setSummary] = useState(event?.summary ?? '')
   const [accountId, setAccountId] = useState(event?.accountId ?? accounts[0]?.id ?? '')
@@ -143,8 +143,17 @@ export default function MeetingDialog({
             {event.description && (
               <p className="max-h-40 overflow-y-auto text-sm break-words whitespace-pre-wrap text-ink-3">{event.description}</p>
             )}
+            {safeWebUrl(event.onlineUrl) && (
+              <p>
+                <a href={safeWebUrl(event.onlineUrl) ?? undefined} target="_blank" rel="noreferrer noopener" className="text-accent underline underline-offset-2">
+                  Join online
+                </a>
+              </p>
+            )}
             <p className="text-sm text-ink-3">
-              This is someone else&apos;s meeting. Change your answer from the invitation email.
+              {event.readOnly
+                ? `From the calendar of ${accounts.find((a) => a.id === event.accountId)?.email ?? 'your account'}. Change it there, and it updates here.`
+                : "This is someone else's meeting. Change your answer from the invitation email."}
             </p>
           </div>
         ) : (
@@ -249,6 +258,7 @@ export default function MeetingDialog({
         <div className="mt-5 flex flex-wrap items-center gap-2">
           {event && (
             <>
+              {!event.readOnly && (
               <button
                 type="button"
                 className={`${btn} flex items-center gap-1.5`}
@@ -262,6 +272,7 @@ export default function MeetingDialog({
                 <Download size={14} strokeWidth={1.75} aria-hidden />
                 .ics
               </button>
+              )}
               {event.messageId && (
                 <button
                   type="button"

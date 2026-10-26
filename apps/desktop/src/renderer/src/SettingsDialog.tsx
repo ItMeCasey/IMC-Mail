@@ -61,6 +61,75 @@ function AccountRow({
   )
 }
 
+const when = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
+
+/** Google and Microsoft accounts can show their own calendar here; this allows it and reads it again on request. */
+function CalendarSources({ hide }: { hide: boolean }) {
+  const qc = useQueryClient()
+  const sources = useQuery({ queryKey: ['calendar', 'sources'], queryFn: () => window.imc.invoke('calendar:sources') })
+  const [busy, setBusy] = useState<string | null>(null)
+  const [note, setNote] = useState<{ id: string; text: string } | null>(null)
+  const list = sources.data ?? []
+  if (list.length === 0) return null
+
+  const run = async (id: string, job: () => Promise<string | null>) => {
+    setBusy(id)
+    setNote(null)
+    try {
+      const text = await job()
+      if (text) setNote({ id, text })
+    } catch (e) {
+      setNote({ id, text: (e instanceof Error ? e.message : String(e)).replace(/^Error invoking remote method '[^']+': (Error: )?/, '') })
+    } finally {
+      setBusy(null)
+      void qc.invalidateQueries({ queryKey: ['calendar'] })
+    }
+  }
+  const connect = (id: string) =>
+    run(id, async () => {
+      const r = await window.imc.invoke('calendar:connect', { accountId: id })
+      return r.ok ? null : (r.message ?? 'The calendar could not be read.')
+    })
+  const syncNow = (id: string) => run(id, () => window.imc.invoke('calendar:syncNow', { accountId: id }).then(() => null))
+
+  return (
+    <Section title="Calendars">
+      {hide ? (
+        <p className="text-sm text-ink-3">Account names are hidden while stream-safe mode is on.</p>
+      ) : (
+        <ul className="space-y-3">
+          {list.map((s) => (
+            <li key={s.accountId} className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm text-ink">{s.email}</span>
+                  <span className={`block text-xs ${s.error ? 'text-alert' : 'text-ink-3'}`}>
+                    {s.error ??
+                      (s.connected
+                        ? `Showing your ${s.provider === 'gmail' ? 'Google' : 'Microsoft'} calendar${s.syncedAt ? `, updated ${when.format(s.syncedAt)}` : ''}`
+                        : 'Not showing its calendar yet')}
+                  </span>
+                </span>
+                <button
+                  className="h-8 shrink-0 rounded-md border border-line-strong px-3 text-sm text-ink hover:bg-hover disabled:opacity-50"
+                  disabled={busy !== null}
+                  onClick={() => void (s.connected && !s.error ? syncNow(s.accountId) : connect(s.accountId))}
+                >
+                  {busy === s.accountId ? 'Working…' : s.connected && !s.error ? 'Update now' : 'Allow calendar'}
+                </button>
+              </div>
+              {note?.id === s.accountId && <p role="alert" className="text-xs text-alert">{note.text}</p>}
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="text-xs text-ink-3">
+        Opens your browser to let IMC-Mail read your calendar. It can only read, never change it. Meetings show in the calendar next to the ones from email.
+      </p>
+    </Section>
+  )
+}
+
 /** Everything that is a setting rather than mail, in one place. */
 export default function SettingsDialog({
   streamSafe,
@@ -263,6 +332,8 @@ export default function SettingsDialog({
             </p>
           )}
         </Section>
+
+        <CalendarSources hide={streamSafe.active} />
 
         <Section title="Manage accounts">
           {accounts.length === 0 && <p className="text-sm text-ink-3">No accounts yet.</p>}

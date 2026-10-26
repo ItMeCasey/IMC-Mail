@@ -29,6 +29,19 @@ describe('buildAuthUrl', () => {
     expect(q.get('redirect_uri')).toBe('http://127.0.0.1:5555/callback')
   })
 
+  it('adds read access to the calendar only when asked, and can name the account', () => {
+    const base = { clientId: 'cid', redirectUri: 'http://localhost:1', state: 's', challenge: 'c' }
+    const without = new URL(buildAuthUrl(oauthProviders.microsoft, base)).searchParams
+    expect(without.get('scope')).not.toContain('Calendars')
+    expect(without.get('login_hint')).toBeNull()
+    const ms = new URL(buildAuthUrl(oauthProviders.microsoft, { ...base, calendar: true, loginHint: 'a@hotmail.com' })).searchParams
+    expect(ms.get('scope')).toContain('https://graph.microsoft.com/Calendars.Read')
+    expect(ms.get('scope')).toContain('IMAP.AccessAsUser.All')
+    expect(ms.get('login_hint')).toBe('a@hotmail.com')
+    const g = new URL(buildAuthUrl(oauthProviders.gmail, { ...base, calendar: true })).searchParams
+    expect(g.get('scope')).toContain('https://www.googleapis.com/auth/calendar.readonly')
+  })
+
   it('asks Microsoft for offline_access and IMAP scopes', () => {
     const u = new URL(
       buildAuthUrl(oauthProviders.microsoft, {

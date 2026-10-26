@@ -25,6 +25,23 @@ export class ReauthRequired extends Error {
   }
 }
 
+/** A token request the provider refused, with its error code (such as "invalid_scope"). */
+export class OAuthError extends Error {
+  constructor(
+    message: string,
+    readonly code: string
+  ) {
+    super(message)
+  }
+}
+
+/** This account has not allowed IMC-Mail to read its calendar yet. */
+export class CalendarNotConnected extends Error {
+  constructor() {
+    super('Calendar access has not been allowed for this account yet.')
+  }
+}
+
 /**
  * Client IDs come from `<userData>/oauth.json` or IMC_* env vars (env wins), so they never
  * live in source control. See docs/oauth-setup.md.
@@ -167,6 +184,8 @@ export interface Tokens {
   refreshToken: string
   /** Epoch ms. */
   expiresAt: number
+  /** What the provider says was allowed (Google lists every scope; Microsoft only the first resource's). */
+  scope?: string
 }
 
 type FetchFn = typeof fetch
@@ -177,7 +196,7 @@ async function requestToken(
   params: Record<string, string>,
   fetchFn: FetchFn,
   now: () => number
-): Promise<{ accessToken: string; refreshToken?: string; expiresAt: number; idToken?: string }> {
+): Promise<{ accessToken: string; refreshToken?: string; expiresAt: number; idToken?: string; scope?: string }> {
   const body = new URLSearchParams({ client_id: client.clientId, ...params })
   if (def.usesClientSecret && client.clientSecret) body.set('client_secret', client.clientSecret)
 
@@ -191,20 +210,23 @@ async function requestToken(
     refresh_token?: string
     expires_in?: number
     id_token?: string
+    scope?: string
     error?: string
     error_description?: string
   }
   if (!res.ok || !json.access_token) {
     if (json.error === 'invalid_grant') throw new ReauthRequired()
-    throw new Error(
-      `Token request failed: ${json.error_description ?? json.error ?? `HTTP ${res.status}`}`
+    throw new OAuthError(
+      `Token request failed: ${json.error_description ?? json.error ?? `HTTP ${res.status}`}`,
+      json.error ?? `http_${res.status}`
     )
   }
   return {
     accessToken: json.access_token,
     refreshToken: json.refresh_token,
     expiresAt: now() + (json.expires_in ?? 3600) * 1000,
-    idToken: json.id_token
+    idToken: json.id_token,
+    scope: json.scope
   }
 }
 
@@ -224,6 +246,10 @@ export async function signIn(
     timeoutMs?: number
     fetchFn?: FetchFn
     now?: () => number
+    /** Also ask to read the calendar. */
+    calendar?: boolean
+    /** Pre-selects this account on the provider's page. */
+    loginHint?: string
   }
 ): Promise<SignInResult> {
   const fetchFn = o.fetchFn ?? fetch
@@ -239,7 +265,7 @@ export async function signIn(
     signal: o.signal,
     openUrl: o.openUrl,
     buildUrl: (redirectUri) =>
-      buildAuthUrl(def, { clientId: client.clientId, redirectUri, state, challenge })
+      buildAuthUrl(def, { clientId: client.clientId, redirectUri, state, challenge, calendar: o.calendar, loginHint: o.loginHint })
   })
 
   const t = await requestToken(
@@ -255,7 +281,7 @@ export async function signIn(
   const { email, name } = identityFromClaims(t.idToken ? decodeJwtPayload(t.idToken) : {})
   if (!email) throw new Error('Could not read your email address from the sign-in response')
   return {
-    tokens: { accessToken: t.accessToken, refreshToken: t.refreshToken, expiresAt: t.expiresAt },
+    tokens: { accessToken: t.accessToken, refreshToken: t.refreshToken, expiresAt: t.expiresAt, scope: t.scope },
     email,
     name
   }
@@ -318,8 +344,69 @@ export class TokenProvider {
       accessToken: t.accessToken,
       // Providers may rotate the refresh token; keep the old one when they don't.
       refreshToken: t.refreshToken ?? tokens.refreshToken,
-      expiresAt: t.expiresAt
+      expiresAt: t.expiresAt,
+      scope: t.scope ?? tokens.scope
     })
     return t.accessToken
+  }
+
+  // ---- calendar ---------------------------------------------------------------------
+
+  private calendarCache = new Map<string, { token: string; expiresAt: number }>()
+  private calendarInflight = new Map<string, Promise<string>>()
+
+  /**
+   * A token for reading this account's calendar. Google's one token covers it once allowed; Microsoft
+   * needs its own token for Graph, got from the same refresh token. Throws CalendarNotConnected when
+   * the account has not allowed calendar access.
+   */
+  getCalendarToken(accountId: string): Promise<string> {
+    let p = this.calendarInflight.get(accountId)
+    if (!p) {
+      p = this.loadCalendar(accountId).finally(() => this.calendarInflight.delete(accountId))
+      this.calendarInflight.set(accountId, p)
+    }
+    return p
+  }
+
+  /** Forget the Graph token, so the next call asks again (after the account allowed access). */
+  forgetCalendarToken(accountId: string): void {
+    this.calendarCache.delete(accountId)
+  }
+
+  private async loadCalendar(accountId: string): Promise<string> {
+    const def = this.providerFor(accountId)
+    if (!def) throw new CalendarNotConnected()
+    const raw = await this.secrets.get(this.key(accountId))
+    if (!raw) throw new CalendarNotConnected()
+    const tokens = JSON.parse(raw) as Tokens
+
+    if (def.id === 'gmail') {
+      if (!def.calendarScopes.every((s) => tokens.scope?.split(' ').includes(s))) throw new CalendarNotConnected()
+      return this.getAccessToken(accountId)
+    }
+
+    const cached = this.calendarCache.get(accountId)
+    if (cached && cached.expiresAt - REFRESH_SKEW_MS > this.now()) return cached.token
+    const client = this.config[def.id]
+    if (!client) throw new CalendarNotConnected()
+    try {
+      const t = await requestToken(
+        def,
+        client,
+        { grant_type: 'refresh_token', refresh_token: tokens.refreshToken, scope: [...def.calendarScopes, 'offline_access'].join(' ') },
+        this.fetchFn,
+        this.now
+      )
+      this.calendarCache.set(accountId, { token: t.accessToken, expiresAt: t.expiresAt })
+      if (t.refreshToken && t.refreshToken !== tokens.refreshToken) await this.save(accountId, { ...tokens, refreshToken: t.refreshToken })
+      return t.accessToken
+    } catch (e) {
+      // Not allowed yet looks like a refused grant or scope, not like a network problem.
+      if (e instanceof ReauthRequired || (e instanceof OAuthError && /^(consent_required|interaction_required|invalid_scope|invalid_request)$/.test(e.code))) {
+        throw new CalendarNotConnected()
+      }
+      throw e
+    }
   }
 }

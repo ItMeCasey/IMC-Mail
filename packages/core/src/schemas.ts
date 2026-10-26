@@ -60,7 +60,9 @@ export const calendarEventSchema = z.object({
   myResponse: calendarResponseSchema.nullable(),
   /** You are the organizer (you sent the invitation). */
   mine: z.boolean(),
-  messageId: z.string().nullable()
+  messageId: z.string().nullable(),
+  /** Read from the account's own calendar: shown, but changed there, not here. */
+  readOnly: z.boolean()
 })
 export type CalendarEvent = z.infer<typeof calendarEventSchema>
 
@@ -535,6 +537,19 @@ export const meetingInputSchema = z.object({
   repeatCount: z.number().int().min(2).max(200).optional()
 })
 export type MeetingInput = z.input<typeof meetingInputSchema>
+
+/** An account whose own calendar can be shown (Microsoft and Google sign-ins). */
+export const calendarSourceSchema = z.object({
+  accountId: z.string(),
+  email: z.string(),
+  provider: z.enum(['gmail', 'microsoft']),
+  /** Calendar access was allowed and the last read worked at least once. */
+  connected: z.boolean(),
+  syncedAt: z.number().nullable(),
+  /** Why the last read failed, in plain words. */
+  error: z.string().nullable()
+})
+export type CalendarSource = z.infer<typeof calendarSourceSchema>
 
 export const calendarOccurrenceSchema = z.object({
   event: calendarEventSchema,

@@ -48,3 +48,25 @@ Limits to know about:
 
 Some organizations disable IMAP OAuth or require admin consent; those accounts will not sign in
 until an admin allows it.
+
+## Showing your calendar (optional)
+
+IMC-Mail can show an account's own calendar next to the meetings that arrive by email. It only
+reads: it never creates, moves or deletes anything in your calendar. In **Settings > Calendars**,
+press **Allow calendar** on the account; your browser opens and asks you to allow it. New accounts
+are asked at sign-in.
+
+**Google:** in the same Google Cloud project, once only:
+
+1. **APIs & Services > Library**, search for **Google Calendar API**, press **Enable**. Without
+   this the calendar fails with "The Google Calendar API is turned off for your Google Cloud project".
+2. **OAuth consent screen > Data access (Scopes) > Add or remove scopes**, add
+   `.../auth/calendar.readonly`. While the app is in Testing mode, your own account (listed under
+   Test users) can use it as is.
+
+**Microsoft:** in the app registration, **API permissions > Add a permission > Microsoft Graph >
+Delegated permissions > `Calendars.Read`**. Personal Outlook.com and Hotmail accounts do not need
+admin consent. Work or school accounts may.
+
+Only the account's main calendar is read, from two weeks back to four months ahead, every ten
+minutes and whenever you press **Update now**.

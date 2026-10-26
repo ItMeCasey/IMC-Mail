@@ -17,7 +17,7 @@ import {
   type ReplyStatus
 } from '@imc/core'
 import { bareAddress } from './compose'
-import type { AccountRow, MailStore, StoredEvent } from './store'
+import type { AccountRow, MailStore, StoredEvent, StoredRemoteEvent } from './store'
 
 const HOUR = 3600e3
 const DAY = 24 * HOUR
@@ -68,7 +68,33 @@ export class CalendarService {
 
   private pub(e: StoredEvent, messageId: string | null = null): CalendarEvent {
     const { exdates: _x, free: _f, updatedAt: _u, ...rest } = e
-    return { ...rest, repeats: describeRecurrence(e.rrule), messageId }
+    return { ...rest, repeats: describeRecurrence(e.rrule), messageId, readOnly: false }
+  }
+
+  private pubRemote(r: StoredRemoteEvent): CalendarEvent {
+    return {
+      id: r.id,
+      accountId: r.accountId,
+      uid: r.uid,
+      sequence: 0,
+      recurrenceId: null,
+      summary: r.summary,
+      description: r.description,
+      location: r.location,
+      start: r.start,
+      end: r.end,
+      allDay: r.allDay,
+      rrule: null,
+      repeats: null,
+      organizer: r.organizer,
+      attendees: r.attendees.map((a) => ({ name: a.name, email: a.email, partstat: a.partstat, role: 'REQ-PARTICIPANT', rsvp: false })),
+      status: r.status,
+      onlineUrl: r.onlineUrl,
+      myResponse: r.myResponse,
+      mine: r.mine,
+      messageId: null,
+      readOnly: true
+    }
   }
 
   private idOf(accountId: string, uid: string, recurrenceId: number | null): string {
@@ -172,6 +198,10 @@ export class CalendarService {
         if (t < e.end && t + len > e.start) out.push({ summary: o.summary, start: t, end: t + len })
       }
     }
+    // Meetings in the account's own calendar block time too.
+    for (const r of this.store.remoteEventsInRange(e.start - DAY, e.end + DAY)) {
+      if (r.uid !== e.uid && !r.free && r.start < e.end && r.end > e.start) out.push({ summary: r.summary, start: r.start, end: r.end })
+    }
     return out.sort((a, b) => a.start - b.start).slice(0, 5)
   }
 
@@ -248,6 +278,12 @@ export class CalendarService {
       const len = e.end - e.start
       const pub = this.pub(e, this.store.messageForEvent(e.id))
       for (const t of occurrences(this.asCal(e), from, to, 100)) out.push({ event: pub, start: t, end: t + len })
+    }
+    // Meetings from the account's own calendar, except the ones that also came by email (those are shown above).
+    const known = new Set(this.store.eventsInRange(from, to).map((e) => `${e.accountId}|${e.uid}`))
+    for (const r of this.store.remoteEventsInRange(from, to)) {
+      if (known.has(`${r.accountId}|${r.uid}`)) continue
+      out.push({ event: this.pubRemote(r), start: r.start, end: r.end })
     }
     return out.sort((a, b) => a.start - b.start)
   }

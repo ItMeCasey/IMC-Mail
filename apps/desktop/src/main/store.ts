@@ -3,6 +3,7 @@ import { buildSearch, parseQuery, SEARCH_LIMIT } from './search'
 import {
   assess,
   type CalendarEvent,
+  type RemoteEvent,
   type Label,
   type SavedSearch,
   type Rule,
@@ -70,8 +71,11 @@ export interface FetchedMessage {
   refs: string[]
 }
 
+/** A meeting read from the account's own calendar. */
+export type StoredRemoteEvent = Omit<RemoteEvent, 'remoteId'> & { id: string; accountId: string }
+
 /** A meeting as stored: the public shape plus what only the app needs. */
-export interface StoredEvent extends CalendarEvent {
+export interface StoredEvent extends Omit<CalendarEvent, 'readOnly'> {
   exdates: number[]
   free: boolean
   updatedAt: number
@@ -1379,6 +1383,102 @@ export class MailStore {
 
   deleteEvent(id: string): void {
     this.db.prepare('DELETE FROM event WHERE id = ?').run(id)
+  }
+
+  // ---- the account's own calendar (read-only copies) ----------------------------------
+
+  /** Swaps what is stored for the window [from, to) with what the calendar returned, in one step. */
+  replaceRemoteEvents(accountId: string, from: number, to: number, events: RemoteEvent[]): void {
+    const del = this.db.prepare('DELETE FROM remote_event WHERE account_id = ? AND end > ? AND start < ?')
+    const put = this.db.prepare(
+      `INSERT OR REPLACE INTO remote_event
+         (id, account_id, uid, summary, description, location, start, end, all_day, status, online_url, organizer, attendees, my_response, mine, free)
+       VALUES (@id, @accountId, @uid, @summary, @description, @location, @start, @end, @allDay, @status, @onlineUrl, @organizer, @attendees, @myResponse, @mine, @free)`
+    )
+    this.db.transaction(() => {
+      del.run(accountId, from, to)
+      for (const e of events) {
+        put.run({
+          id: `${accountId}:${e.remoteId}`,
+          accountId,
+          uid: e.uid,
+          summary: e.summary,
+          description: e.description,
+          location: e.location,
+          start: e.start,
+          end: e.end,
+          allDay: e.allDay ? 1 : 0,
+          status: e.status,
+          onlineUrl: e.onlineUrl,
+          organizer: e.organizer ? JSON.stringify(e.organizer) : null,
+          attendees: JSON.stringify(e.attendees),
+          myResponse: e.myResponse,
+          mine: e.mine ? 1 : 0,
+          free: e.free ? 1 : 0
+        })
+      }
+    })()
+  }
+
+  remoteEventsInRange(from: number, to: number): StoredRemoteEvent[] {
+    const rows = this.db.prepare('SELECT * FROM remote_event WHERE end > ? AND start < ? ORDER BY start').all(from, to) as {
+      id: string
+      account_id: string
+      uid: string
+      summary: string
+      description: string
+      location: string
+      start: number
+      end: number
+      all_day: number
+      status: 'CONFIRMED' | 'TENTATIVE'
+      online_url: string | null
+      organizer: string | null
+      attendees: string
+      my_response: CalendarEvent['myResponse']
+      mine: number
+      free: number
+    }[]
+    return rows.map((r) => ({
+      id: r.id,
+      accountId: r.account_id,
+      uid: r.uid,
+      summary: r.summary,
+      description: r.description,
+      location: r.location,
+      start: r.start,
+      end: r.end,
+      allDay: r.all_day === 1,
+      status: r.status,
+      onlineUrl: r.online_url,
+      organizer: r.organizer ? (JSON.parse(r.organizer) as StoredRemoteEvent['organizer']) : null,
+      attendees: JSON.parse(r.attendees) as StoredRemoteEvent['attendees'],
+      myResponse: r.my_response,
+      mine: r.mine === 1,
+      free: r.free === 1
+    }))
+  }
+
+  clearRemoteEvents(accountId: string): void {
+    this.db.transaction(() => {
+      this.db.prepare('DELETE FROM remote_event WHERE account_id = ?').run(accountId)
+      this.db.prepare('DELETE FROM remote_sync WHERE account_id = ?').run(accountId)
+    })()
+  }
+
+  setRemoteSync(accountId: string, syncedAt: number | null, error: string | null): void {
+    this.db
+      .prepare(
+        `INSERT INTO remote_sync (account_id, synced_at, error) VALUES (?, ?, ?)
+         ON CONFLICT(account_id) DO UPDATE SET synced_at = COALESCE(excluded.synced_at, synced_at), error = excluded.error`
+      )
+      .run(accountId, syncedAt, error)
+  }
+
+  remoteSyncStates(): { accountId: string; syncedAt: number | null; error: string | null }[] {
+    return (this.db.prepare('SELECT account_id, synced_at, error FROM remote_sync').all() as { account_id: string; synced_at: number | null; error: string | null }[]).map(
+      (r) => ({ accountId: r.account_id, syncedAt: r.synced_at, error: r.error })
+    )
   }
 
   messageHasInvite(id: string): boolean {

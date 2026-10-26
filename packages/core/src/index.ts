@@ -1,6 +1,7 @@
 export * from './categorize'
 export * from './ical'
 export * from './url'
+export * from './calendarsync'
 export * from './ipc'
 export * from './oauth'
 export * from './providers'

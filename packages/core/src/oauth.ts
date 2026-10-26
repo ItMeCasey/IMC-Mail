@@ -8,6 +8,8 @@ export interface OAuthProviderDef {
   authorizeUrl: string
   tokenUrl: string
   scopes: string[]
+  /** Read access to the account's calendar, asked for at sign-in or later. Microsoft needs another resource (Graph). */
+  calendarScopes: string[]
   /** Host used in the loopback redirect URI; each provider only accepts its own spelling. */
   loopbackHost: '127.0.0.1' | 'localhost'
   /**
@@ -30,6 +32,7 @@ export const oauthProviders: Record<OAuthProviderId, OAuthProviderDef> = {
     authorizeUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
     tokenUrl: 'https://oauth2.googleapis.com/token',
     scopes: ['https://mail.google.com/', 'openid', 'email', 'profile'],
+    calendarScopes: ['https://www.googleapis.com/auth/calendar.readonly'],
     loopbackHost: '127.0.0.1',
     redirectPath: '/callback',
     authParams: { access_type: 'offline', prompt: 'consent' },
@@ -50,6 +53,7 @@ export const oauthProviders: Record<OAuthProviderId, OAuthProviderDef> = {
       'email',
       'profile'
     ],
+    calendarScopes: ['https://graph.microsoft.com/Calendars.Read'],
     loopbackHost: 'localhost',
     redirectPath: '',
     authParams: { prompt: 'select_account' },
@@ -61,14 +65,15 @@ export const oauthProviders: Record<OAuthProviderId, OAuthProviderDef> = {
 
 export function buildAuthUrl(
   def: OAuthProviderDef,
-  p: { clientId: string; redirectUri: string; state: string; challenge: string }
+  p: { clientId: string; redirectUri: string; state: string; challenge: string; calendar?: boolean; loginHint?: string }
 ): string {
   const url = new URL(def.authorizeUrl)
   const q = url.searchParams
   q.set('client_id', p.clientId)
   q.set('redirect_uri', p.redirectUri)
   q.set('response_type', 'code')
-  q.set('scope', def.scopes.join(' '))
+  q.set('scope', (p.calendar ? [...def.scopes, ...def.calendarScopes] : def.scopes).join(' '))
+  if (p.loginHint) q.set('login_hint', p.loginHint)
   q.set('state', p.state)
   q.set('code_challenge', p.challenge)
   q.set('code_challenge_method', 'S256')

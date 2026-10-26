@@ -268,5 +268,35 @@ export const migrations: readonly string[] = [
     actions    TEXT NOT NULL,
     created_at INTEGER NOT NULL
   );
+  `,
+  `
+  -- Meetings read from the account's own calendar (Microsoft or Google), read-only copies.
+  CREATE TABLE remote_event (
+    id          TEXT PRIMARY KEY,
+    account_id  TEXT NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+    uid         TEXT NOT NULL,
+    summary     TEXT NOT NULL DEFAULT '',
+    description TEXT NOT NULL DEFAULT '',
+    location    TEXT NOT NULL DEFAULT '',
+    start       INTEGER NOT NULL,
+    end         INTEGER NOT NULL,
+    all_day     INTEGER NOT NULL DEFAULT 0,
+    status      TEXT NOT NULL DEFAULT 'CONFIRMED',
+    online_url  TEXT,
+    organizer   TEXT,
+    attendees   TEXT NOT NULL DEFAULT '[]',
+    my_response TEXT,
+    mine        INTEGER NOT NULL DEFAULT 0,
+    free        INTEGER NOT NULL DEFAULT 0
+  );
+  CREATE INDEX remote_event_start_idx ON remote_event(start);
+  CREATE INDEX remote_event_uid_idx ON remote_event(account_id, uid);
+
+  -- When each account's calendar was last read, and why it could not be.
+  CREATE TABLE remote_sync (
+    account_id TEXT PRIMARY KEY REFERENCES account(id) ON DELETE CASCADE,
+    synced_at  INTEGER,
+    error      TEXT
+  );
   `
 ]

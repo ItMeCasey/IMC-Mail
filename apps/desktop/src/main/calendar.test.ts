@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import Database from 'better-sqlite3'
 import { simpleParser } from 'mailparser'
 import { SMTPServer } from 'smtp-server'
-import { parseICS, type CalEvent, type ImapAccountInput } from '@imc/core'
+import { parseICS, type CalEvent, type ImapAccountInput, type RemoteEvent } from '@imc/core'
 import { CalendarService } from './calendar'
 import { ComposeService, SmtpMailer } from './compose'
 import { migrate } from './db'
@@ -364,6 +364,37 @@ describe('agenda and export', () => {
     expect(occ.map((o) => o.end - o.start)).toEqual([3600e3, 3600e3, 3600e3])
     await t.cal.respond(t.msgId, 'declined')
     expect(t.cal.list(Date.UTC(2026, 10, 1), Date.UTC(2026, 11, 31))).toHaveLength(0)
+  })
+
+  it('shows meetings from the account calendar as read-only, once, next to the ones that came by email', () => {
+    const t = setup()
+    t.ingest(REQUEST())
+    const remote = (id: string, uid: string, start: number, over: Partial<RemoteEvent> = {}): RemoteEvent => ({
+      remoteId: id, uid, summary: `Synced ${id}`, description: '', location: '', start, end: start + 3600e3, allDay: false, status: 'CONFIRMED',
+      onlineUrl: null, organizer: null, attendees: [], myResponse: 'accepted', mine: false, free: false, ...over
+    })
+    const from = Date.UTC(2026, 10, 1)
+    const to = Date.UTC(2026, 11, 31)
+    t.store.replaceRemoteEvents(t.acct, from, to, [
+      remote('a', 'OTHER@cal', Date.UTC(2026, 10, 10, 15)),
+      remote('same', 'UID-KICKOFF-1', Date.UTC(2026, 10, 4, 19)) // the same meeting as the invitation
+    ])
+    const occ = t.cal.list(from, to)
+    expect(occ.map((o) => o.event.summary)).toEqual(['Q4 sponsorship kickoff', 'Synced a'])
+    expect(occ[0]!.event.readOnly).toBe(false)
+    expect(occ[1]!.event).toMatchObject({ readOnly: true, mine: false, messageId: null, repeats: null, accountId: t.acct })
+  })
+
+  it('a synced meeting counts as busy when a new invitation overlaps it, unless it is free time', () => {
+    const t = setup()
+    const base = { description: '', location: '', allDay: false, status: 'CONFIRMED' as const, onlineUrl: null, organizer: null, attendees: [], myResponse: 'accepted' as const, mine: false }
+    const start = Date.UTC(2026, 10, 4, 19, 30)
+    t.store.replaceRemoteEvents(t.acct, Date.UTC(2026, 10, 1), Date.UTC(2026, 11, 1), [
+      { ...base, remoteId: 'busy', uid: 'b@cal', summary: 'Dentist', start, end: start + 3600e3, free: false },
+      { ...base, remoteId: 'free', uid: 'f@cal', summary: 'Reminder', start, end: start + 3600e3, free: true }
+    ])
+    t.ingest(REQUEST())
+    expect(t.cal.inviteFor(t.msgId)!.conflicts.map((c) => c.summary)).toEqual(['Dentist'])
   })
 
   it('exports an .ics file Outlook can open', () => {

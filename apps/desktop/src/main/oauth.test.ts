@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { oauthProviders } from '@imc/core'
 import {
+  CalendarNotConnected,
   challengeFor,
   loadOAuthConfig,
   ReauthRequired,
@@ -265,5 +266,61 @@ describe('TokenProvider', () => {
     const { tp } = setup(fetchFn as unknown as typeof fetch)
     await tp.save('a1', { accessToken: 'old', refreshToken: 'r', expiresAt: 1 })
     await expect(tp.getAccessToken('a1')).rejects.toThrow(/bad secret/)
+  })
+})
+
+describe('TokenProvider calendar access', () => {
+  const config: OAuthConfig = { gmail: { clientId: 'cid', clientSecret: 'sec' }, microsoft: { clientId: 'mid' } }
+  const setup = (provider: 'gmail' | 'microsoft', fetchFn: typeof fetch) => {
+    const secrets = memory()
+    const tp = new TokenProvider(secrets, config, () => oauthProviders[provider], fetchFn, () => 10_000_000)
+    return { secrets, tp }
+  }
+  const GOOGLE_CAL = 'https://www.googleapis.com/auth/calendar.readonly'
+
+  it('Google: uses the one token once the calendar scope was granted, and refuses before', async () => {
+    const { tp } = setup('gmail', vi.fn() as unknown as typeof fetch)
+    await tp.save('g', { accessToken: 'live', refreshToken: 'r', expiresAt: 10_000_000 + 600_000, scope: `https://mail.google.com/ ${GOOGLE_CAL}` })
+    await tp.save('old', { accessToken: 'live2', refreshToken: 'r', expiresAt: 10_000_000 + 600_000, scope: 'https://mail.google.com/' })
+    expect(await tp.getCalendarToken('g')).toBe('live')
+    await expect(tp.getCalendarToken('old')).rejects.toBeInstanceOf(CalendarNotConnected)
+    await expect(tp.getCalendarToken('missing')).rejects.toBeInstanceOf(CalendarNotConnected)
+  })
+
+  it('Google: keeps the granted scopes when a refresh does not repeat them', async () => {
+    const fetchFn = async () => jsonRes(200, { access_token: 'fresh', expires_in: 3600 })
+    const { tp, secrets } = setup('gmail', fetchFn as unknown as typeof fetch)
+    await tp.save('g', { accessToken: 'old', refreshToken: 'r', expiresAt: 1, scope: GOOGLE_CAL })
+    await tp.getAccessToken('g')
+    expect(JSON.parse(secrets.data.get('oauth:g')!).scope).toBe(GOOGLE_CAL)
+  })
+
+  it('Microsoft: gets a Graph token from the refresh token, caches it, and keeps a rotated refresh token', async () => {
+    const calls: URLSearchParams[] = []
+    const fetchFn = vi.fn(async (_u: unknown, init?: { body?: unknown }) => {
+      calls.push(init!.body as URLSearchParams)
+      return jsonRes(200, { access_token: 'graph', refresh_token: 'rotated', expires_in: 3600 })
+    })
+    const { tp, secrets } = setup('microsoft', fetchFn as unknown as typeof fetch)
+    await tp.save('m', { accessToken: 'imap', refreshToken: 'r1', expiresAt: 1 })
+    const [a, b] = await Promise.all([tp.getCalendarToken('m'), tp.getCalendarToken('m')])
+    expect([a, b]).toEqual(['graph', 'graph'])
+    expect(await tp.getCalendarToken('m')).toBe('graph')
+    expect(fetchFn).toHaveBeenCalledTimes(1)
+    expect(calls[0]!.get('scope')).toContain('https://graph.microsoft.com/Calendars.Read')
+    expect(calls[0]!.get('grant_type')).toBe('refresh_token')
+    expect(JSON.parse(secrets.data.get('oauth:m')!)).toMatchObject({ accessToken: 'imap', refreshToken: 'rotated' })
+  })
+
+  it('Microsoft: a refused scope means "not connected", other failures stay errors', async () => {
+    const consent = async () => jsonRes(400, { error: 'invalid_grant', error_description: 'AADSTS65001 consent required' })
+    const a = setup('microsoft', consent as unknown as typeof fetch)
+    await a.tp.save('m', { accessToken: 'x', refreshToken: 'r', expiresAt: 1 })
+    await expect(a.tp.getCalendarToken('m')).rejects.toBeInstanceOf(CalendarNotConnected)
+
+    const server = async () => jsonRes(500, { error: 'server_error', error_description: 'try later' })
+    const b = setup('microsoft', server as unknown as typeof fetch)
+    await b.tp.save('m', { accessToken: 'x', refreshToken: 'r', expiresAt: 1 })
+    await expect(b.tp.getCalendarToken('m')).rejects.toThrow(/try later/)
   })
 })

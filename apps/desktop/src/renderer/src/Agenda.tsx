@@ -16,7 +16,7 @@ const monthName = new Intl.DateTimeFormat(undefined, { month: 'long', year: 'num
 const startOfDay = (ms: number) => new Date(new Date(ms).setHours(0, 0, 0, 0)).getTime()
 
 const label = (e: CalendarEvent): string =>
-  e.mine ? 'Organizer' : e.myResponse ? RESPONSE_LABEL[e.myResponse] : 'No answer'
+  e.mine ? 'Organizer' : e.myResponse ? RESPONSE_LABEL[e.myResponse] : e.readOnly ? 'On your calendar' : 'No answer'
 
 /** The next 30 days of meetings, from invitations you accepted and meetings you organize. */
 export default function Agenda({

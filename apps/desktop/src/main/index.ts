@@ -25,6 +25,7 @@ import { SnoozeWaker } from './snooze'
 import { TemplateService } from './templates'
 import { DEFAULT_NOTIFICATIONS, Notifier } from './notifications'
 import { loadOAuthConfig, signIn, TokenProvider } from './oauth'
+import { CalendarSync } from './calendar-sync'
 import { safeStorageSecrets } from './secrets'
 import { MailStore, type AccountRow } from './store'
 import { testConnection } from './sync/engine'
@@ -35,6 +36,7 @@ let db: Db
 let sync: SyncManager
 let composeService: ComposeService | undefined
 let streamSafe: StreamSafeController | undefined
+let calendarSync: CalendarSync | undefined
 let notifier: Notifier | undefined
 let snoozeWaker: SnoozeWaker | undefined
 let badge: BadgeController | undefined
@@ -403,6 +405,12 @@ app.whenReady().then(async () => {
   }
   applyStreamerFeatures(streamerFeatures)
   let signInAbort: AbortController | null = null
+  calendarSync = new CalendarSync({
+    store,
+    calendarToken: (id) => tokens.getCalendarToken(id),
+    onChange: (accountId) => emit('sync:changed', { accountId })
+  })
+  const calendarSyncer = calendarSync
 
   protocol.handle('imc-body', (req) => {
     const url = new URL(req.url)
@@ -812,6 +820,39 @@ app.whenReady().then(async () => {
     'calendar:respond': ({ messageId, response, comment }) =>
       calendar.respond(messageId, response, comment),
     'calendar:list': ({ from, to }) => calendar.list(from, to),
+    'calendar:sources': () => {
+      const states = new Map(store.remoteSyncStates().map((s) => [s.accountId, s]))
+      return store.listAccounts().flatMap((a) => {
+        if (a.provider !== 'gmail' && a.provider !== 'microsoft') return []
+        const s = states.get(a.id)
+        return [{ accountId: a.id, email: a.email, provider: a.provider, connected: !!s && (s.syncedAt !== null || s.error === null), syncedAt: s?.syncedAt ?? null, error: s?.error ?? null }]
+      })
+    },
+    'calendar:connect': async ({ accountId }) => {
+      const account = store.listAccounts().find((a) => a.id === accountId)
+      if (!account || (account.provider !== 'gmail' && account.provider !== 'microsoft')) throw new Error('Only Google and Microsoft accounts have a calendar to show')
+      const def = oauthProviders[account.provider]
+      const client = oauthConfig[account.provider]
+      if (!client) throw new Error(`${def.label} sign-in is not configured on this computer. See docs/oauth-setup.md.`)
+      if (signInAbort) throw new Error('A sign-in is already in progress')
+      signInAbort = new AbortController()
+      try {
+        const result = await signIn(def, client, { openUrl: (url) => shell.openExternal(url), signal: signInAbort.signal, calendar: true, loginHint: account.email })
+        if (result.email.toLowerCase() !== account.email.toLowerCase()) {
+          throw new Error(`You signed in as ${result.email}, but this account is ${account.email}. Try again with the right one.`)
+        }
+        await tokens.save(account.id, result.tokens)
+        tokens.forgetCalendarToken(account.id)
+      } finally {
+        signInAbort = null
+      }
+      const r = await calendarSyncer.syncAccount(account.id)
+      return { ok: r.state === 'connected', message: r.state === 'error' ? r.error : r.state === 'not-connected' ? 'Calendar access was not allowed.' : null }
+    },
+    'calendar:syncNow': async ({ accountId }) => {
+      if (accountId) await calendarSyncer.syncAccount(accountId)
+      else await calendarSyncer.syncAll()
+    },
     'calendar:schedule': (input) => calendar.schedule(input),
     'calendar:update': ({ id, patch }) => calendar.update(id, patch),
     'calendar:cancel': ({ id }) => calendar.cancel(id),
@@ -894,6 +935,7 @@ app.whenReady().then(async () => {
 
   store.backfillCategories()
   sync.startAll()
+  calendarSync.start()
   createWindow()
   badge?.reset()
   app.on('activate', () => {
@@ -914,6 +956,7 @@ app.on('window-all-closed', () => {
 
 app.on('will-quit', () => {
   clearOpenedFiles()
+  calendarSync?.stop()
   snoozeWaker?.stop()
   badge?.stop()
   notifier?.stop()
