@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { fileReport, handle, Limiter, scrub, validate } from './relay.mjs'
+import { clientIp, fileReport, handle, Limiter, scrub, validate } from './relay.mjs'
 
 const repo = 'ItMeCasey/IMC-Mail'
 /** A fake GitHub: records calls, answers searches from `open`. */
@@ -21,6 +21,20 @@ test('scrub removes addresses, user names and tokens', () => {
   assert.equal(scrub('mail pat@nova.example'), 'mail <email>')
   assert.equal(scrub('C:\\Users\\casey\\a.js'), 'C:\\Users\\<user>\\a.js')
   assert.match(scrub('key ' + 'a'.repeat(40)), /<token>/)
+})
+
+test('scrub stops a report from notifying people with @mentions', () => {
+  assert.equal(scrub('cc @octocat please'), 'cc @​octocat please')
+  assert.equal(scrub('@everyone'), '@​everyone')
+  assert.equal(scrub('pat@nova.example'), '<email>')
+  assert.equal(scrub('`@code`'), '`@code`')
+})
+
+test('the caller address is the last X-Forwarded-For entry, which a caller cannot choose', () => {
+  assert.equal(clientIp('6.6.6.6, 9.9.9.9', '127.0.0.1'), '9.9.9.9')
+  assert.equal(clientIp('9.9.9.9', '127.0.0.1'), '9.9.9.9')
+  assert.equal(clientIp(undefined, '127.0.0.1'), '127.0.0.1')
+  assert.equal(clientIp('', undefined), 'unknown')
 })
 
 test('validate accepts a good report and cleans it', () => {

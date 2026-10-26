@@ -1,7 +1,7 @@
 import appIcon from '../../build/icon.ico?asset'
-import { app, BrowserWindow, Menu, Tray, dialog, globalShortcut, nativeImage, Notification, protocol, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, Menu, Tray, dialog, globalShortcut, nativeImage, Notification, protocol, session, shell } from 'electron'
 import { execFile } from 'node:child_process'
-import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { basename, join } from 'node:path'
@@ -160,7 +160,22 @@ app.on('child-process-gone', (_e, d) => {
   if (d.reason !== 'clean-exit') crashLog?.add('process-gone', { message: `${d.type} process ended: ${d.reason}` })
 })
 
+/** Where PDFs are unpacked to be opened in the system viewer; emptied at start and quit so they do not pile up. */
+const openedFilesDir = (): string => join(app.getPath('temp'), 'imc-mail-open')
+const clearOpenedFiles = (): void => {
+  try {
+    rmSync(openedFilesDir(), { recursive: true, force: true })
+  } catch {
+    // a viewer may still hold one open; it is removed next time
+  }
+}
+
 app.whenReady().then(async () => {
+  // The app never needs the camera, microphone, location or any other web permission, so refuse them all.
+  // (Electron approves every request by default.) Notifications come from the main process, not the page.
+  session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
+  session.defaultSession.setPermissionCheckHandler(() => false)
+  clearOpenedFiles()
   const userData = app.getPath('userData')
   db = openDb(join(userData, 'imc-mail.sqlite'))
   const store = new MailStore(db)
@@ -768,7 +783,7 @@ app.whenReady().then(async () => {
     },
     'compose:replyContext': ({ messageId, mode }) => compose.replyContext(messageId, mode),
     'compose:attach': async ({ paths }) => {
-      if (paths) return compose.vetFiles(paths)
+      if (paths) return compose.attachDropped(paths)
       const pick = await dialog.showOpenDialog({ properties: ['openFile', 'multiSelections'] })
       return pick.canceled ? [] : compose.vetFiles(pick.filePaths)
     },
@@ -839,7 +854,7 @@ app.whenReady().then(async () => {
       if (!meta) throw new Error('That attachment is not available')
       const att = await messages.attachment(messageId, attachmentId)
       if (!looksLikePdf(att.content)) throw new Error('This file is not a real PDF, so it was not opened. Save it if you trust it.')
-      const dir = join(app.getPath('temp'), 'imc-mail-open')
+      const dir = openedFilesDir()
       await mkdir(dir, { recursive: true })
       const path = join(dir, `${randomUUID()}-${safeFilename(meta.filename).replace(/\.pdf$/i, '')}.pdf`)
       await writeFile(path, att.content)
@@ -858,6 +873,11 @@ app.whenReady().then(async () => {
       await writeFile(target.filePath, att.content)
       return { saved: target.filePath }
     }
+  })
+
+  // The window tells us which files the user dropped on it (see the preload); only those can be attached by path.
+  ipcMain.on('attach:allow', (e, path: unknown) => {
+    if (typeof path === 'string' && BrowserWindow.fromWebContents(e.sender)) composeService?.allowDropped(path)
   })
 
   store.backfillCategories()
@@ -881,6 +901,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('will-quit', () => {
+  clearOpenedFiles()
   snoozeWaker?.stop()
   badge?.stop()
   notifier?.stop()

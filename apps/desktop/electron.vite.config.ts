@@ -17,6 +17,15 @@ export default defineConfig({
     resolve: {
       alias: { '@renderer': resolve(__dirname, 'src/renderer/src') }
     },
-    plugins: [react(), tailwindcss()]
+    plugins: [
+      react(),
+      tailwindcss(),
+      {
+        // The dev server needs a websocket for hot reload; the shipped app must not be able to talk to local services.
+        name: 'dev-csp-localhost',
+        apply: 'serve',
+        transformIndexHtml: (html) => html.replace("connect-src 'self'", "connect-src 'self' ws://localhost:* http://localhost:*")
+      }
+    ]
   }
 })

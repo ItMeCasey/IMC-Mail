@@ -3,8 +3,10 @@ import {
   buildICS,
   buildReply,
   describeRecurrence,
+  escapeHtml,
   occurrences,
   replySubject,
+  safeWebUrl,
   type CalEvent,
   type CalendarEvent,
   type CalendarOccurrence,
@@ -31,7 +33,7 @@ const RESPONSE_OF: Record<string, CalendarResponse | undefined> = {
   DECLINED: 'declined'
 }
 
-const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+const esc = escapeHtml
 
 /** "Wed, Nov 4, 2026, 2:00 PM EST" in the machine's zone. */
 export function describeWhen(start: number, end: number, allDay: boolean): string {
@@ -298,7 +300,7 @@ export class CalendarService {
       `<p>When: ${esc(describeWhen(e.start, e.end, e.allDay))}</p>`,
       e.repeats ? `<p>Repeats: ${esc(e.repeats)}</p>` : '',
       e.location ? `<p>Where: ${esc(e.location)}</p>` : '',
-      e.onlineUrl ? `<p>Join: <a href="${esc(e.onlineUrl)}">${esc(e.onlineUrl)}</a></p>` : '',
+      safeWebUrl(e.onlineUrl) ? `<p>Join: <a href="${esc(e.onlineUrl!)}">${esc(e.onlineUrl!)}</a></p>` : '',
       e.description ? `<p>${esc(e.description).replace(/\n/g, '<br>')}</p>` : ''
     ]
     await this.mail.send({

@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { safeWebUrl } from './url'
 
 // ---- Smart categories -----------------------------------------------------------
 
@@ -82,11 +83,19 @@ export const oauthProviderIdSchema = z.enum(['gmail', 'microsoft'])
 
 export const securitySchema = z.enum(['tls', 'starttls', 'none'])
 
-export const serverSchema = z.object({
-  host: z.string().trim().min(1).max(255),
-  port: z.number().int().min(1).max(65535),
-  security: securitySchema
-})
+/** Hosts on this computer, where unencrypted mail never crosses a network. */
+export const isLocalHost = (host: string): boolean => /^(localhost|127\.\d+\.\d+\.\d+|\[?::1\]?)$/i.test(host.trim())
+
+export const serverSchema = z
+  .object({
+    host: z.string().trim().min(1).max(255),
+    port: z.number().int().min(1).max(65535),
+    security: securitySchema
+  })
+  .refine((s) => s.security !== 'none' || isLocalHost(s.host), {
+    message: 'Unencrypted connections would send your password in the clear. Choose TLS or STARTTLS.',
+    path: ['security']
+  })
 export type ServerConfig = z.infer<typeof serverSchema>
 
 export const syncStateSchema = z.enum(['connecting', 'syncing', 'idle', 'error'])
@@ -514,7 +523,12 @@ export const meetingInputSchema = z.object({
   allDay: z.boolean().default(false),
   /** Addresses, optionally "Name <addr>". */
   attendees: z.array(z.string().trim().min(3).max(320)).min(1).max(100),
-  onlineUrl: z.string().max(2000).nullable().default(null),
+  onlineUrl: z
+    .string()
+    .max(2000)
+    .refine((v) => v === '' || safeWebUrl(v) !== null, 'Use a full web address starting with http:// or https://')
+    .nullable()
+    .default(null),
   /** How a new meeting repeats. Left out on an edit, the series is unchanged. */
   repeat: z.enum(['none', 'daily', 'weekly', 'biweekly', 'monthly']).optional(),
   /** Occurrences in all, when it repeats. */

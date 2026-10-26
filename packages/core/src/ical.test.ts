@@ -312,6 +312,37 @@ describe('writing iCalendar', () => {
     expect(escapeText('a,b;c\\d\ne')).toBe('a\\,b\\;c\\\\d\\ne')
   })
 
+  it('a line break in a field cannot start a new calendar property', () => {
+    const ics = buildICS(
+      'REQUEST',
+      { ...meeting, uid: 'x@imc\r\nATTENDEE:mailto:evil@x.example', onlineUrl: 'https://ok.example/a\r\nORGANIZER:mailto:evil@x.example' },
+      NOW
+    )
+    const props = ics.split('\r\n').filter((l) => !l.startsWith(' '))
+    expect(props.some((l) => l.includes('evil@x.example') && !/^(UID|URL|X-MICROSOFT-SKYPETEAMSMEETINGURL):/.test(l))).toBe(false)
+    expect(props.filter((l) => l.startsWith('ORGANIZER'))).toHaveLength(1)
+  })
+
+  it('ignores a meeting link that is not a plain web address', () => {
+    const wrap = (extra: string) => crlf(`
+BEGIN:VCALENDAR
+METHOD:REQUEST
+VERSION:2.0
+BEGIN:VEVENT
+UID:u1@x
+DTSTART:20261104T190000Z
+DTEND:20261104T200000Z
+SUMMARY:Hi
+${extra}
+END:VEVENT
+END:VCALENDAR
+`)
+    expect(parseICS(wrap('URL:https://meet.example.com/j/1'))[0]!.onlineUrl).toBe('https://meet.example.com/j/1')
+    expect(parseICS(wrap('URL:https://x.example/"onmouseover="alert(1)'))[0]!.onlineUrl).toBeNull()
+    expect(parseICS(wrap('URL:javascript:alert(1)'))[0]!.onlineUrl).toBeNull()
+    expect(parseICS(wrap('URL:file:///C:/Windows/System32/calc.exe'))[0]!.onlineUrl).toBeNull()
+  })
+
   it('does not split multi-byte characters when folding', () => {
     const folded = foldLine('DESCRIPTION:' + '日本語'.repeat(40))
     expect(folded.replace(/\r\n /g, '')).toBe('DESCRIPTION:' + '日本語'.repeat(40))

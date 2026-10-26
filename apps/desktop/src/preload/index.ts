@@ -19,7 +19,10 @@ const api = {
   },
   /** The on-disk path of a dropped or picked File (browsers hide it; Electron exposes it here). */
   getFilePath(file: File): string {
-    return webUtils.getPathForFile(file)
+    const path = webUtils.getPathForFile(file)
+    // Tell the main process this file really came from the user, so it is the only kind of path it will attach.
+    if (path) ipcRenderer.send('attach:allow', path)
+    return path
   },
   /** Subscribes to a main-process push; returns an unsubscribe function. */
   on<E extends IpcEvent>(event: E, cb: (payload: IpcEventPayload<E>) => void): () => void {

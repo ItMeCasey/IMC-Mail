@@ -5,7 +5,7 @@
 //   PORT           default 8787 (listens on 127.0.0.1; put nginx in front of it)
 //   TRUST_PROXY    set to 1 when behind nginx, so the caller's address is read from X-Forwarded-For
 import { createServer } from 'node:http'
-import { githubClient, handle, Limiter } from './relay.mjs'
+import { clientIp, githubClient, handle, Limiter } from './relay.mjs'
 
 const token = process.env.GITHUB_TOKEN
 if (!token) {
@@ -31,8 +31,7 @@ const server = createServer((req, res) => {
     chunks.push(c)
   })
   req.on('end', async () => {
-    const forwarded = trustProxy ? String(req.headers['x-forwarded-for'] ?? '').split(',')[0].trim() : ''
-    const ip = forwarded || req.socket.remoteAddress || 'unknown'
+    const ip = trustProxy ? clientIp(req.headers['x-forwarded-for'], req.socket.remoteAddress) : req.socket.remoteAddress || 'unknown'
     const path = (req.url ?? '/').split('?')[0]
     const out = await handle({ method: req.method, path, ip, bodyText: Buffer.concat(chunks).toString('utf8') }, { limiter, github, repo })
     res.writeHead(out.status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })

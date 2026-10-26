@@ -16,6 +16,17 @@ export function scrub(text) {
     .replace(/(\/(?:Users|home)\/)[^/\s'"]+/g, '$1<user>')
     .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, '$1 <token>')
     .replace(/\b[A-Za-z0-9_-]{32,}\b/g, '<token>')
+    // A report must not be able to notify people: GitHub pings anyone written as @name.
+    .replace(/(^|[^\w`])@(?=[A-Za-z0-9])/g, '$1@​')
+}
+
+/**
+ * The caller's address behind a proxy. nginx adds the address it saw to the end of X-Forwarded-For,
+ * so the last entry is the one a caller cannot choose; earlier entries may be anything.
+ */
+export function clientIp(forwardedFor, socketAddress) {
+  const last = String(forwardedFor ?? '').split(',').pop().trim()
+  return last || socketAddress || 'unknown'
 }
 
 /** Allows a few reports per address per hour, and a ceiling for the whole service per day. */

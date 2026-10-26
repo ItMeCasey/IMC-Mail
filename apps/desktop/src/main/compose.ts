@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { copyFile, mkdir, rm, stat } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import { basename, join, resolve, sep } from 'node:path'
 import MailComposer from 'nodemailer/lib/mail-composer'
 import { createTransport } from 'nodemailer'
 import addressparser from 'nodemailer/lib/addressparser'
@@ -135,6 +135,30 @@ export class ComposeService {
 
   // -- attachments --
 
+  /** Files that were picked in a dialog or dropped on the window; only these can be attached and sent. */
+  private vetted = new Set<string>()
+  /** Paths the window reported from a real drop (see allowDropped). */
+  private dropped = new Set<string>()
+
+  /** The window saw the user drop this file. A page script cannot make one up, so it is the only way a path arrives from the window. */
+  allowDropped(path: string): void {
+    if (typeof path === 'string' && path.length < 1024) this.dropped.add(path)
+  }
+
+  /** Attaches files the window says were dropped on it; any other path is refused. */
+  attachDropped(paths: string[]): Promise<DraftAttachment[]> {
+    for (const p of paths) {
+      if (!this.dropped.has(p)) throw new Error('That file was not added by dropping it on the window. Use the attach button instead.')
+    }
+    return this.vetFiles(paths)
+  }
+
+  private isAttachable(path: string): boolean {
+    if (this.vetted.has(path)) return true
+    const dir = resolve(this.deps.outboxDir) + sep
+    return resolve(path).startsWith(dir)
+  }
+
   async vetFiles(paths: string[]): Promise<DraftAttachment[]> {
     const out: DraftAttachment[] = []
     for (const p of paths) {
@@ -143,6 +167,7 @@ export class ComposeService {
       if (s.size > MAX_ATTACHMENT_BYTES) {
         throw new Error(`${basename(p)} is larger than 25 MB, which most mail servers refuse`)
       }
+      this.vetted.add(p)
       out.push({ id: randomUUID(), filename: basename(p), size: s.size, path: p })
     }
     return out
@@ -152,7 +177,8 @@ export class ComposeService {
 
   saveDraft(draft: Draft): { id: string } {
     const id = draft.id ?? randomUUID()
-    this.store.saveDraft(id, draft.accountId, JSON.stringify({ ...draft, id }))
+    const attachments = draft.attachments.filter((a) => this.isAttachable(a.path))
+    this.store.saveDraft(id, draft.accountId, JSON.stringify({ ...draft, attachments, id }))
     return { id }
   }
 
@@ -171,7 +197,11 @@ export class ComposeService {
 
   loadDraft(id: string): Draft | null {
     const raw = this.store.getDraft(id)
-    return raw ? draftSchema.parse(JSON.parse(raw)) : null
+    if (!raw) return null
+    const draft = draftSchema.parse(JSON.parse(raw))
+    // Saved drafts only keep files that were attached here, so they stay attachable after a restart.
+    for (const a of draft.attachments) this.vetted.add(a.path)
+    return draft
   }
 
   discardDraft(id: string): void {
@@ -262,6 +292,9 @@ export class ComposeService {
     const bcc = clean(draft.bcc, 'Bcc')
     if (to.length + cc.length + bcc.length === 0) throw new Error('Add at least one recipient')
 
+    for (const a of draft.attachments) {
+      if (!this.isAttachable(a.path)) throw new Error(`${basename(a.path)} was not attached from this window. Remove it and attach it again.`)
+    }
     const files = await this.vetFiles(draft.attachments.map((a) => a.path))
     const total = files.reduce((n, f) => n + f.size, 0)
     if (total > MAX_ATTACHMENT_BYTES) {

@@ -309,6 +309,32 @@ describe('validation', () => {
     await expect(t.svc.send(draft('missing'))).rejects.toThrow(/Choose an account/)
   })
 
+  it('will not send a file that was never attached from the window', async () => {
+    const t = setup()
+    const secret = join(mkdtempSync(join(tmpdir(), 'imc-elsewhere-')), 'secret.txt') // outside the outbox
+    writeFileSync(secret, 'private')
+    const forged = { id: 'a1', filename: 'secret.txt', size: 7, path: secret }
+    await expect(t.svc.send(draft(t.account.id, { attachments: [forged] }))).rejects.toThrow(/not attached from this window/)
+    await t.svc.vetFiles([secret]) // the attach button, or a drop
+    await expect(t.svc.send(draft(t.account.id, { attachments: [forged] }))).resolves.toBeTruthy()
+  })
+
+  it('attaches by path only for files the window reported as dropped', async () => {
+    const t = setup()
+    const file = join(t.dir, 'dropped.txt')
+    writeFileSync(file, 'x')
+    await expect(Promise.resolve().then(() => t.svc.attachDropped([file]))).rejects.toThrow(/not added by dropping/)
+    t.svc.allowDropped(file)
+    await expect(t.svc.attachDropped([file])).resolves.toHaveLength(1)
+  })
+
+  it('does not keep unapproved attachments in a saved draft', () => {
+    const t = setup()
+    const forged = { id: 'a1', filename: 'passwords.txt', size: 7, path: join(mkdtempSync(join(tmpdir(), 'imc-elsewhere-')), 'passwords.txt') }
+    const { id } = t.svc.saveDraft(draft(t.account.id, { attachments: [forged] }))
+    expect(t.svc.loadDraft(id)!.attachments).toEqual([])
+  })
+
   it('refuses attachments over 25 MB', async () => {
     const t = setup()
     const big = join(t.dir, 'big.bin')

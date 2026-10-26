@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { CalendarDays, Check, CircleHelp, Download, MapPin, Repeat, TriangleAlert, Users, Video, X } from 'lucide-react'
-import type { CalendarResponse, Invite } from '@imc/core'
+import { safeWebUrl, type CalendarResponse, type Invite } from '@imc/core'
 
 const errText = (e: unknown) =>
   (e instanceof Error ? e.message : String(e)).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
@@ -156,9 +156,9 @@ export default function InviteCard({ messageId, invite }: { messageId: string; i
       )}
 
       <div className="flex flex-wrap items-center gap-2">
-        {e.onlineUrl && !cancelled && (
+        {safeWebUrl(e.onlineUrl) && !cancelled && (
           <a
-            href={e.onlineUrl}
+            href={safeWebUrl(e.onlineUrl) ?? undefined}
             target="_blank"
             rel="noreferrer noopener"
             className="flex h-8 items-center gap-1.5 rounded-md bg-accent px-3 text-sm font-medium text-on-accent transition-colors duration-(--dur-fast) hover:bg-accent-hover"

@@ -10,6 +10,7 @@
  *  - replies that Outlook will accept: same UID and SEQUENCE, ATTENDEE with PARTSTAT, METHOD:REPLY
  *  - all times we send are UTC ("...Z"), which Outlook shows in the reader's own time zone
  */
+import { safeWebUrl } from './url'
 
 export type PartStat = 'NEEDS-ACTION' | 'ACCEPTED' | 'DECLINED' | 'TENTATIVE' | 'DELEGATED'
 
@@ -263,7 +264,8 @@ const JOIN_LINK =
 export function findJoinLink(...texts: string[]): string | null {
   for (const t of texts) {
     const m = JOIN_LINK.exec(t)
-    if (m) return m[0].replace(/[.,;]+$/, '')
+    const link = m ? safeWebUrl(m[0].replace(/[.,;]+$/, '')) : null
+    if (link) return link
   }
   return null
 }
@@ -379,7 +381,7 @@ function buildEvent(props: Prop[], method: string | null, fixed: Map<string, num
       rsvp: (a.params['RSVP'] ?? '').toUpperCase() === 'TRUE'
     })),
     status: status === 'CANCELLED' || status === 'TENTATIVE' ? status : 'CONFIRMED',
-    onlineUrl: url && /^https?:\/\//i.test(url) ? url : findJoinLink(location, description),
+    onlineUrl: safeWebUrl(url) ?? findJoinLink(location, description),
     dtstamp: stamp ? (parseTime(stamp, fixed)?.ms ?? null) : null,
     free: first('TRANSP')?.value.trim().toUpperCase() === 'TRANSPARENT'
   }
@@ -561,7 +563,12 @@ export const icsDate = (ms: number): string => {
   return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`
 }
 
-const quoteParam = (v: string) => (/[;:,]/.test(v) ? `"${v.replace(/"/g, "'")}"` : v)
+/** One line of an iCalendar file can never hold a line break: a pasted one would start a new property. */
+const oneLine = (v: string) => v.replace(/[\u0000-\u001f\u007f]+/g, ' ')
+const quoteParam = (v: string) => {
+  const s = oneLine(v)
+  return /[;:,]/.test(s) ? `"${s.replace(/"/g, "'")}"` : s
+}
 const mailto = (email: string) => `mailto:${email}`
 
 export interface IcsAttendee {
@@ -661,7 +668,7 @@ export function vtimezone(zone: string, tzid: string, around: number): string[] 
 /** A complete iCalendar document, CRLF-terminated, ready for a text/calendar part. */
 export function buildICS(method: IcsMethod, ev: IcsEvent, now = Date.now()): string {
   const lines: string[] = ['BEGIN:VCALENDAR', 'PRODID:' + PRODID, 'VERSION:2.0', 'CALSCALE:GREGORIAN', `METHOD:${method}`, 'BEGIN:VEVENT']
-  const add = (l: string) => lines.push(l)
+  const add = (l: string) => lines.push(oneLine(l))
   const zoned = !!(ev.zone && ev.rrule && !ev.allDay)
   const tzid = zoned ? tzidFor(ev.zone!) : ''
   if (zoned) lines.splice(lines.indexOf('BEGIN:VEVENT'), 0, ...vtimezone(ev.zone!, tzid, ev.start))
