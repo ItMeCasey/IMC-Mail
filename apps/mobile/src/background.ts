@@ -6,6 +6,7 @@ import { cache, settings } from './db'
 import { flushOutbox, folderKey, refreshFolder, savedMessages } from './mail'
 import { mailAllowed, notifyNewMail, rescheduleReminders } from './notify'
 import { syncNow } from './phonesync'
+import { tell } from './report'
 
 // Android runs this now and then (at best every 15 minutes, and less when the battery is low) even while the app is
 // closed: it syncs with your other devices, checks each account's inbox for new mail, sends anything waiting in the
@@ -33,8 +34,10 @@ TaskManager.defineTask(TASK, async () => {
       await notifyNewMail(found)
     }
     await rescheduleReminders()
-    return BackgroundTask.BackgroundTaskResult.Success
-  } catch {
+    void tell({ background: 'ok' })
+  } catch (e) {
+    void tell({ background: 'failed', message: e instanceof Error ? e.message : String(e) })
+    void tell({ background: 'failed' })
     return BackgroundTask.BackgroundTaskResult.Failed
   }
 })

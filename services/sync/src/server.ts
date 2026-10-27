@@ -56,6 +56,19 @@ const server = createServer((req, res) => {
 server.requestTimeout = 20_000
 server.listen(port, '127.0.0.1', () => console.log(`sync server listening on 127.0.0.1:${port}`))
 
+// Deletion records are kept for six months so a device that syncs now and then still hears about them, then dropped.
+const KEEP_DELETED_MS = 180 * 24 * 60 * 60 * 1000
+const prune = () => {
+  try {
+    const n = store.pruneDeleted(Date.now(), KEEP_DELETED_MS)
+    if (n > 0) console.log(`[sync] dropped ${n} old deletion records`)
+  } catch (e) {
+    console.error('[sync] pruning failed', e)
+  }
+}
+prune()
+setInterval(prune, 6 * 60 * 60 * 1000).unref()
+
 const stop = () => {
   server.close(() => {
     store.close()

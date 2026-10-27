@@ -134,6 +134,16 @@ export class SyncStore {
   }
 
   /**
+   * Forgets deletion records older than `maxAgeMs`. Every device that syncs at least that often has seen them by now;
+   * one that was off for longer could bring a deleted item back, so keep this long. Returns how many were removed.
+   */
+  pruneDeleted(now: number, maxAgeMs: number): number {
+    // A stamp starts with its time as 15 digits, so older stamps sort before this cut-off.
+    const cutoff = String(Math.max(0, now - maxAgeMs)).padStart(15, '0')
+    return Number(this.db.prepare('DELETE FROM record WHERE deleted = 1 AND hlc < ?').run(cutoff).changes)
+  }
+
+  /**
    * Stores records that are newer than what the group has. A record that replaces an older one takes
    * a new, higher sequence number, so every device that already pulled the old one sees the change.
    * Returns how many were stored and how many were turned away because the group is full.
