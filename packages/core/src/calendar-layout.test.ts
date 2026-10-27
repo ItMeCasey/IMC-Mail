@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { placeDay } from './dayLayout'
+import { placeDay } from './calendar-layout'
 
 const DAY = 24 * 60 * 60_000
 const at = (h: number, m = 0) => (h * 60 + m) * 60_000
@@ -41,5 +41,33 @@ describe('placeDay', () => {
   it('gives a very short meeting room for its minimum height, so the next one does not sit on it', () => {
     const r = placeDay([meet('a', at(9), at(9, 5)), meet('b', at(9, 10), at(10))], 0, DAY, 25)
     expect(r.map((p) => p.lane)).toEqual([0, 1])
+  })
+})
+
+import { groupByDayOf, weekOf } from './calendar-layout'
+
+describe('weekOf', () => {
+  it('is the Sunday-first week that holds the date', () => {
+    const w = weekOf(new Date(2026, 10, 4)) // a Wednesday
+    expect(w.map((d) => d.getDate())).toEqual([1, 2, 3, 4, 5, 6, 7])
+    expect(w[0]!.getDay()).toBe(0)
+  })
+
+  it('crosses a month end', () => {
+    expect(weekOf(new Date(2026, 9, 31)).map((d) => [d.getMonth(), d.getDate()])).toEqual([[9, 25], [9, 26], [9, 27], [9, 28], [9, 29], [9, 30], [9, 31]])
+  })
+})
+
+describe('groupByDayOf', () => {
+  const day = (d: number, h = 0) => new Date(2026, 10, d, h).getTime()
+  it('puts a meeting on every day it touches', () => {
+    const m = { start: day(3, 22), end: day(4, 2) }
+    const g = groupByDayOf([m], () => false)
+    expect([...g.keys()]).toEqual(['2026-11-03', '2026-11-04'])
+  })
+
+  it('treats the end of an all-day meeting as the day after it', () => {
+    const m = { start: day(3), end: day(5) }
+    expect([...groupByDayOf([m], () => true).keys()]).toEqual(['2026-11-03', '2026-11-04'])
   })
 })

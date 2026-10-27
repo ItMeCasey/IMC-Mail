@@ -4,7 +4,7 @@ import { StatusBar } from 'expo-status-bar'
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { navBack, navCanBack, navCanForward, navCurrent, navFilter, navForward, navPush, navStart, type NavHistory } from '@imc/core'
 import AddAccount from './src/AddAccount'
-import Agenda from './src/Agenda'
+import Calendar from './src/Calendar'
 import { loadAccounts, type PhoneAccount } from './src/auth'
 import { scheduleBackgroundCheck } from './src/background'
 import Compose from './src/Compose'
@@ -120,7 +120,7 @@ function Shell() {
               onAddAccount={() => go({ name: 'addAccount' })}
             />
           )}
-          {screen.tab === 'calendar' && <Agenda />}
+          {screen.tab === 'calendar' && <Calendar />}
           {screen.tab === 'deals' && <Deals />}
           {screen.tab === 'settings' && <SettingsScreen accounts={accounts} onAccountsChanged={() => void reload()} onAddAccount={() => go({ name: 'addAccount' })} onDevices={() => go({ name: 'devices' })} onDiagnostics={() => go({ name: 'diagnostics' })} />}
         </Screen>
