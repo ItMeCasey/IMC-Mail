@@ -274,6 +274,8 @@ function Devices({ hidden }: { hidden: boolean }) {
   const [joinCode, setJoinCode] = useState('')
   const [confirmOff, setConfirmOff] = useState(false)
   const [confirmRotate, setConfirmRotate] = useState(false)
+  const [confirmRemoveAll, setConfirmRemoveAll] = useState(false)
+  const others = (devices.data ?? []).filter((d) => !d.current)
   const [copied, setCopied] = useState(false)
 
   // The code holds the key: never keep it on screen while stream-safe mode is on.
@@ -462,6 +464,37 @@ function Devices({ hidden }: { hidden: boolean }) {
           ) : (
             <button className={row} disabled={busy !== null} onClick={() => setConfirmRotate(true)}>
               Replace the key…
+            </button>
+          )}
+        </Section>
+      )}
+
+      {s?.paired && !s.revoked && (
+        <Section title="Remove all devices">
+          <p className="text-sm text-ink-3">
+            Removes every other device from sync at once ({others.length === 0 ? 'there are none right now' : others.length === 1 ? '1 device' : `${others.length} devices`}). This computer stays. A removed device stops syncing, but it keeps the settings it already has and still holds the old key, so to cut it off for good, replace the key as well.
+          </p>
+          {confirmRemoveAll ? (
+            <div className="flex gap-2">
+              <button
+                className="h-9 rounded-md border border-alert px-4 text-alert hover:bg-hover disabled:opacity-50"
+                disabled={busy !== null || others.length === 0}
+                onClick={() =>
+                  void run('removeAll', async () => {
+                    for (const d of others) await window.imc.invoke('sync:removeDevice', { id: d.id })
+                    setConfirmRemoveAll(false)
+                  })
+                }
+              >
+                {busy === 'removeAll' ? 'Removing…' : others.length === 1 ? 'Yes, remove the device' : `Yes, remove all ${others.length} devices`}
+              </button>
+              <button className="h-9 rounded-md border border-line-strong px-4 text-ink hover:bg-hover" onClick={() => setConfirmRemoveAll(false)}>
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button className={row} disabled={busy !== null || others.length === 0} onClick={() => setConfirmRemoveAll(true)}>
+              Remove all other devices…
             </button>
           )}
         </Section>
