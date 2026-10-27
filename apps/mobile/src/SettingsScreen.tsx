@@ -4,25 +4,18 @@ import { appPrefs, notificationPrefs, setAppPrefs } from '@imc/mail'
 import { holidayCountries } from '@imc/mail/holidays'
 import { removeAccount, type PhoneAccount } from './auth'
 import { notifyChanged, useChanged } from './changes'
+import { AppBar, Avatar, Group, SettingRow } from './chrome'
 import { forgetAccount, items, queue, settings } from './db'
 import { flushOutbox } from './mail'
 import { rescheduleReminders, setUpNotifications } from './notify'
 import { applyPrivacy } from './privacy'
 import { sync, syncNow } from './phonesync'
-import { Body, Card, colors, Link, Note, Section, Title } from './ui'
+import { Body, colors, Note, radius } from './ui'
 
 const LEADS = [5, 10, 15, 30, 60]
 
-function Toggle({ label, hint, value, onChange }: { label: string; hint?: string; value: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <View style={st.toggle}>
-      <View style={{ flex: 1 }}>
-        <Text style={{ color: colors.text, fontSize: 15 }}>{label}</Text>
-        {hint ? <Text style={{ color: colors.muted, fontSize: 12 }}>{hint}</Text> : null}
-      </View>
-      <Switch value={value} onValueChange={onChange} trackColor={{ true: colors.accent, false: colors.line }} thumbColor={colors.text} accessibilityLabel={label} />
-    </View>
-  )
+function Toggle({ value, onChange, label }: { value: boolean; onChange: (v: boolean) => void; label: string }) {
+  return <Switch value={value} onValueChange={onChange} trackColor={{ true: colors.accent, false: colors.line }} thumbColor={value ? colors.text : colors.faint} accessibilityLabel={label} />
 }
 
 interface Props {
@@ -33,7 +26,7 @@ interface Props {
   onDiagnostics: () => void
 }
 
-/** Settings: accounts, privacy, notifications and the choices that sync with your other devices. */
+/** Settings: accounts, syncing, privacy, notifications and the choices that sync with your other devices. */
 export default function SettingsScreen({ accounts, onAccountsChanged, onAddAccount, onDevices, onDiagnostics }: Props) {
   const changed = useChanged()
   const [local, setLocal] = useState(settings.get())
@@ -51,6 +44,7 @@ export default function SettingsScreen({ accounts, onAccountsChanged, onAddAccou
     settings.set(patch)
     setLocal(settings.get())
     applyPrivacy()
+    notifyChanged()
   }
   const pref = (patch: Parameters<typeof setAppPrefs>[1]) => {
     setAppPrefs(items, patch)
@@ -86,84 +80,101 @@ export default function SettingsScreen({ accounts, onAccountsChanged, onAddAccou
   }
 
   return (
-    <Body>
-      <Title>Settings</Title>
+    <View style={{ flex: 1 }}>
+      <AppBar title="Settings" />
+      <Body gap={0}>
+        <Group title="Accounts">
+          {accounts.map((a) => (
+            <SettingRow
+              key={a.email}
+              label={a.name || a.email}
+              hint={`${a.email} · ${a.provider === 'gmail' ? 'Google' : a.provider === 'microsoft' ? 'Microsoft' : (a.protocol ?? 'imap').toUpperCase()}`}
+              onPress={() => remove(a)}
+              right={<Avatar name={a.name || a.email} size={32} />}
+            />
+          ))}
+          <SettingRow label="Add an account" onPress={onAddAccount} />
+        </Group>
+        <Note style={st.tip}>Tap an account to remove it from this phone.</Note>
 
-      <Section>Accounts</Section>
-      {accounts.map((a) => (
-        <Card key={a.email}>
-          <Text style={{ color: colors.text }}>{a.email}</Text>
-          <Text style={{ color: colors.muted, fontSize: 12 }}>{a.provider === 'gmail' ? 'Google' : a.provider === 'microsoft' ? 'Microsoft' : (a.protocol ?? 'imap').toUpperCase()}</Text>
-          <Link danger onPress={() => remove(a)}>
-            Remove from this phone
-          </Link>
-        </Card>
-      ))}
-      <Link onPress={onAddAccount}>Add an account</Link>
+        <Group title="Syncing">
+          <SettingRow label="Devices" hint={status.paired ? `Syncing as ${status.deviceName}` : 'Pair with the desktop app'} onPress={onDevices} />
+        </Group>
 
-      <Section>Syncing</Section>
-      <Link onPress={onDevices}>{status.paired ? 'Devices (syncing)' : 'Devices — pair with the desktop app'}</Link>
+        <Group title="Appearance">
+          <SettingRow label="Show company logos" hint="Gets each sender's icon from Google's favicon service, which sees the sender's domain" right={<Toggle label="Show company logos" value={local.showLogos} onChange={(v) => change({ showLogos: v })} />} />
+        </Group>
 
-      <Section>Privacy</Section>
-      <Toggle label="Hide this app in recent apps" hint="Also blocks screenshots and screen recording" value={local.privacyScreen} onChange={(v) => change({ privacyScreen: v })} />
-      <Toggle label="Hide message details in notifications" hint="Shows only “New message”" value={local.hideNotificationDetails} onChange={(v) => change({ hideNotificationDetails: v })} />
+        <Group title="Privacy">
+          <SettingRow label="Hide in recent apps" hint="Also blocks screenshots and screen recording" right={<Toggle label="Hide in recent apps" value={local.privacyScreen} onChange={(v) => change({ privacyScreen: v })} />} />
+          <SettingRow label="Hide message details in notifications" hint="Shows only “New message”" right={<Toggle label="Hide details" value={local.hideNotificationDetails} onChange={(v) => change({ hideNotificationDetails: v })} />} />
+        </Group>
 
-      <Section>Notifications</Section>
-      <Toggle label="Notifications" value={notify.enabled} onChange={(v) => setNotify({ enabled: v })} />
-      <Toggle label="Check for new mail in the background" hint="About every 15 minutes or more, when Android allows" value={local.checkMailInBackground} onChange={(v) => change({ checkMailInBackground: v })} />
-      <Toggle label="Quiet hours" hint={`${notify.quietHours.start} to ${notify.quietHours.end}`} value={notify.quietHours.enabled} onChange={(v) => setNotify({ quietHours: { ...notify.quietHours, enabled: v } })} />
-      <Toggle label="Meeting reminders" value={prefs.meetingReminders} onChange={(v) => pref({ meetingReminders: v })} />
-      <View style={st.leads}>
-        <Text style={{ color: colors.muted }}>Remind me</Text>
-        {LEADS.map((m) => (
-          <Link key={m} onPress={() => pref({ reminderLeadMinutes: m })}>
-            {prefs.reminderLeadMinutes === m ? `● ${m}` : `${m}`}
-          </Link>
-        ))}
-        <Text style={{ color: colors.muted }}>min before</Text>
-      </View>
-      <Link
-        onPress={() =>
-          void setUpNotifications().then((ok) => {
-            setNote(ok ? 'Notifications are allowed.' : 'Notifications are blocked. Turn them on in Android settings for IMC-Mail.')
-            void rescheduleReminders()
-          })
-        }
-      >
-        Allow notifications
-      </Link>
+        <Group title="Notifications">
+          <SettingRow label="Notifications" right={<Toggle label="Notifications" value={notify.enabled} onChange={(v) => setNotify({ enabled: v })} />} />
+          <SettingRow label="Check mail in the background" hint="About every 15 minutes, when Android allows" right={<Toggle label="Background check" value={local.checkMailInBackground} onChange={(v) => change({ checkMailInBackground: v })} />} />
+          <SettingRow label="Quiet hours" hint={`${notify.quietHours.start} to ${notify.quietHours.end}`} right={<Toggle label="Quiet hours" value={notify.quietHours.enabled} onChange={(v) => setNotify({ quietHours: { ...notify.quietHours, enabled: v } })} />} />
+          <SettingRow label="Meeting reminders" right={<Toggle label="Meeting reminders" value={prefs.meetingReminders} onChange={(v) => pref({ meetingReminders: v })} />} />
+          <SettingRow
+            label="Remind me before"
+            right={
+              <View style={st.leads}>
+                {LEADS.map((m) => (
+                  <Text key={m} accessibilityRole="button" onPress={() => pref({ reminderLeadMinutes: m })} style={[st.lead, prefs.reminderLeadMinutes === m && st.leadOn]}>
+                    {m}
+                  </Text>
+                ))}
+              </View>
+            }
+          />
+          <SettingRow
+            label="Allow notifications"
+            hint="Ask Android for permission"
+            onPress={() =>
+              void setUpNotifications().then((ok) => {
+                setNote(ok ? 'Notifications are allowed.' : 'Notifications are blocked. Turn them on in Android settings for IMC-Mail.')
+                void rescheduleReminders()
+              })
+            }
+          />
+        </Group>
 
-      <Section>Calendar</Section>
-      <Toggle label="Show holidays" value={prefs.showHolidays} onChange={(v) => pref({ showHolidays: v })} />
-      <Toggle label="Holiday reminders" value={prefs.holidayReminders} onChange={(v) => pref({ holidayReminders: v })} />
-      <View style={st.leads}>
-        <Text style={{ color: colors.muted }}>Country code</Text>
-        <TextInput value={country} onChangeText={saveCountry} maxLength={2} autoCapitalize="characters" autoCorrect={false} style={st.country} />
-      </View>
+        <Group title="Calendar">
+          <SettingRow label="Show holidays" right={<Toggle label="Show holidays" value={prefs.showHolidays} onChange={(v) => pref({ showHolidays: v })} />} />
+          <SettingRow label="Holiday reminders" right={<Toggle label="Holiday reminders" value={prefs.holidayReminders} onChange={(v) => pref({ holidayReminders: v })} />} />
+          <SettingRow label="Country code" right={<TextInput value={country} onChangeText={saveCountry} maxLength={2} autoCapitalize="characters" autoCorrect={false} style={st.country} />} />
+        </Group>
 
-      <Section>Outbox</Section>
-      <Note>{outbox === 0 ? 'Nothing waiting to send.' : `${outbox} message${outbox === 1 ? '' : 's'} waiting for a connection.`}</Note>
-      {outbox > 0 && (
-        <Link
-          onPress={() =>
-            void flushOutbox(accounts).then((n) => {
-              setOutbox(queue.list().length)
-              setNote(n > 0 ? `Sent ${n}.` : 'Could not send yet.')
-            })
-          }
-        >
-          Send now
-        </Link>
-      )}
+        <Group title="Outbox">
+          <SettingRow
+            label={outbox === 0 ? 'Nothing waiting to send' : `${outbox} message${outbox === 1 ? '' : 's'} waiting`}
+            hint={outbox === 0 ? undefined : 'Tap to try sending now'}
+            onPress={
+              outbox === 0
+                ? undefined
+                : () =>
+                    void flushOutbox(accounts).then((n) => {
+                      setOutbox(queue.list().length)
+                      setNote(n > 0 ? `Sent ${n}.` : 'Could not send yet.')
+                    })
+            }
+          />
+        </Group>
 
-      {note !== null && <Note>{note}</Note>}
-      <Link onPress={onDiagnostics}>Diagnostics</Link>
-    </Body>
+        <Group title="About">
+          <SettingRow label="Diagnostics" onPress={onDiagnostics} />
+        </Group>
+        {note !== null && <Note style={st.tip}>{note}</Note>}
+        <View style={{ height: 24 }} />
+      </Body>
+    </View>
   )
 }
 
 const st = StyleSheet.create({
-  toggle: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  leads: { flexDirection: 'row', alignItems: 'center', gap: 14, flexWrap: 'wrap' },
-  country: { color: colors.text, backgroundColor: colors.raised, borderRadius: 4, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.line, paddingHorizontal: 12, paddingVertical: 6, width: 60, textAlign: 'center' }
+  tip: { fontSize: 12, paddingTop: 8 },
+  leads: { flexDirection: 'row', gap: 4 },
+  lead: { color: colors.muted, fontSize: 14, paddingHorizontal: 9, paddingVertical: 6, borderRadius: radius, borderWidth: 1, borderColor: colors.line, overflow: 'hidden' },
+  leadOn: { color: colors.onAccent, backgroundColor: colors.accent, borderColor: colors.accent, fontWeight: '600' },
+  country: { color: colors.text, backgroundColor: colors.bg, borderRadius: radius, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.line, paddingHorizontal: 12, paddingVertical: 6, width: 64, textAlign: 'center' }
 })

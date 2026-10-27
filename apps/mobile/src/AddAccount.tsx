@@ -5,7 +5,8 @@ import { ImapClient, Pop3Client, SmtpClient } from '@imc/mail'
 import { addPasswordAccount, signIn, type PhoneAccount } from './auth'
 import { describeError } from './screens'
 import { tcpConnect } from './tcp'
-import { Body, Button, colors, ErrorText, Link, Note, Screen, Title } from './ui'
+import { AppBar, BackIcon, IconButton } from './chrome'
+import { Body, Button, colors, ErrorText, Link, Note, Screen } from './ui'
 
 type Security = 'tls' | 'starttls'
 
@@ -102,9 +103,8 @@ export default function AddAccount({ onAdded, onBack }: { onAdded: (a: PhoneAcco
 
   return (
     <Screen>
+      <AppBar left={<IconButton label="Back" onPress={onBack}><BackIcon /></IconButton>} title="Add an account" />
       <Body>
-        <Link onPress={onBack}>‹ Back</Link>
-        <Title>Add an account</Title>
         <Note>Google and Microsoft sign in on their own page, so this app never sees your password.</Note>
         <Button disabled={busy !== null} onPress={() => void oauth('gmail')}>
           {busy === 'gmail' ? 'Waiting for Google…' : 'Add a Google account'}

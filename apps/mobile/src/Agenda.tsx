@@ -5,7 +5,8 @@ import { holidaysBetween } from '@imc/mail/holidays'
 import { useChanged } from './changes'
 import { items } from './db'
 import { syncNow } from './phonesync'
-import { Body, Card, colors, Link, Note, Title } from './ui'
+import { AppBar } from './chrome'
+import { Body, Card, colors, Link, Note } from './ui'
 
 const DAY = 86_400_000
 const PAGE_DAYS = 14
@@ -60,8 +61,9 @@ export default function Agenda() {
   useEffect(() => void refresh(), [refresh])
 
   return (
-    <Body refreshing={refreshing} onRefresh={() => void refresh()}>
-      <Title>Calendar</Title>
+    <View style={{ flex: 1 }}>
+      <AppBar title="Calendar" subtitle={dayHead.format(from)} />
+      <Body refreshing={refreshing} onRefresh={() => void refresh()}>
       <View style={{ flexDirection: 'row', gap: 20 }}>
         {page > 0 && <Link onPress={() => setPage(page - 1)}>‹ Earlier</Link>}
         {page > 0 && <Link onPress={() => setPage(0)}>Today</Link>}
@@ -88,6 +90,7 @@ export default function Agenda() {
           ))}
         </View>
       ))}
-    </Body>
+      </Body>
+    </View>
   )
 }

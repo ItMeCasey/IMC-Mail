@@ -4,7 +4,8 @@ import { DEAL_STAGES, listDeals, outstanding, setDealStage, type Deal } from '@i
 import { notifyChanged, useChanged } from './changes'
 import { items } from './db'
 import { syncNow } from './phonesync'
-import { Body, Card, colors, Link, Note, Title } from './ui'
+import { AppBar } from './chrome'
+import { Body, Card, colors, Link, Note } from './ui'
 
 const money = (n: number, currency: string): string => {
   try {
@@ -40,8 +41,9 @@ export default function Deals() {
   }
 
   return (
-    <Body refreshing={refreshing} onRefresh={() => void refresh()}>
-      <Title>Deals</Title>
+    <View style={{ flex: 1 }}>
+      <AppBar title="Deals" />
+      <Body refreshing={refreshing} onRefresh={() => void refresh()}>
       {owed.length > 0 && <Note>Still to come: {owed.map(([c, n]) => money(n, c)).join(', ')}</Note>}
       {deals.length === 0 && <Note>No deals yet. Deals you track on the desktop app appear here; pull down to sync.</Note>}
       {deals.map((d) => (
@@ -71,6 +73,7 @@ export default function Deals() {
           )}
         </Card>
       ))}
-    </Body>
+      </Body>
+    </View>
   )
 }

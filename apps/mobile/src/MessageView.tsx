@@ -1,22 +1,23 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native'
 import * as Sharing from 'expo-sharing'
 import { assess } from '@imc/core'
-import { labelsByMessage, listLabels, setLabel, setSnooze, snoozedUntil, startDraft, type Address, type Folder, type MessageAction, type ReplyMode, type Summary } from '@imc/mail'
+import { labelsByMessage, listLabels, logoDomain, setLabel, setSnooze, snoozedUntil, startDraft, type Address, type Folder, type MessageAction, type ReplyMode, type Summary } from '@imc/mail'
 import { buildPhoneDocument, sanitizeEmailHtml, textToHtml } from '@imc/mail/render'
 import type { PhoneAccount } from './auth'
 import { notifyChanged, useChanged } from './changes'
-import { items } from './db'
+import { AppBar, Avatar, BackIcon, IconButton, MenuItem, MenuLabel, Sheet } from './chrome'
+import { items, settings } from './db'
 import { actOn, readMessage, saveAttachment, type OpenedMessage } from './mail'
 import MessageHtml from './MessageHtml'
 import { tell } from './report'
 import { describeError, type ComposeStart } from './screens'
-import { colors, ErrorText, Link, Note, Screen } from './ui'
+import { colors, ErrorText, Link, Note, radius, Screen } from './ui'
 
 const full = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 const who = (a: Address): string => (a.name && a.name !== a.address ? `${a.name} <${a.address}>` : a.address)
 const size = (n: number): string => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)} MB` : n >= 1000 ? `${Math.round(n / 1000)} KB` : `${n} B`)
-const addressText = (list: Address[]): string => list.map((a) => (a.name && a.name !== a.address ? `${a.name} <${a.address}>` : a.address)).join(', ')
+const addressText = (list: Address[]): string => list.map(who).join(', ')
 
 interface Props {
   account: PhoneAccount
@@ -35,6 +36,7 @@ export default function MessageView({ account, folder, summary, onBack, onCompos
   const [error, setError] = useState<string | null>(null)
   const [allowImages, setAllowImages] = useState(false)
   const [more, setMore] = useState(false)
+  const [details, setDetails] = useState(false)
   const [starred, setStarred] = useState(summary.flags.includes('\\Flagged'))
   const changed = useChanged()
 
@@ -74,8 +76,10 @@ export default function MessageView({ account, folder, summary, onBack, onCompos
 
   const attachments = m?.attachments.map((a, index) => ({ a, index })).filter(({ a }) => !a.inline) ?? []
   const from = summary.from
+  const sender = from?.name || from?.address || '(unknown sender)'
 
   const run = async (action: MessageAction, leave: boolean) => {
+    setMore(false)
     try {
       await actOn(account, folder, [summary], action)
       if (action === 'star' || action === 'unstar') setStarred(action === 'star')
@@ -86,6 +90,7 @@ export default function MessageView({ account, folder, summary, onBack, onCompos
   }
 
   const reply = (mode: ReplyMode) => {
+    setMore(false)
     // The quoted text comes from the message body, so wait until it has been read.
     if (!m) return setError('Wait for the message to finish loading, then try again.')
     const d = startDraft({ from: summary.from, to: summary.to, cc: summary.cc, subject: summary.subject, messageId: summary.messageId, references: summary.references, date: summary.date, text: m.text }, mode, account.email)
@@ -93,6 +98,7 @@ export default function MessageView({ account, folder, summary, onBack, onCompos
   }
 
   const snooze = (until: number | null) => {
+    setMore(false)
     if (!summary.messageId) return
     setSnooze(items, account.email, summary.messageId, until)
     notifyChanged()
@@ -117,24 +123,46 @@ export default function MessageView({ account, folder, summary, onBack, onCompos
 
   const footer = (
     <View style={st.bar}>
-      <Link onPress={() => reply('reply')}>Reply</Link>
-      <Link onPress={() => reply('replyAll')}>Reply all</Link>
-      <Link onPress={() => reply('forward')}>Forward</Link>
-      <Link onPress={() => void run('archive', true)}>Archive</Link>
-      <Link onPress={() => void run('trash', true)}>Trash</Link>
-      <Link onPress={() => setMore(!more)}>{more ? 'Less' : 'More'}</Link>
+      <Action label="Reply" primary onPress={() => reply('reply')} />
+      <Action label="Archive" onPress={() => void run('archive', true)} />
+      <Action label="Trash" onPress={() => void run('trash', true)} />
+      <Action label="More" onPress={() => setMore(true)} />
     </View>
   )
 
   return (
     <Screen footer={footer}>
-      <ScrollView style={st.head} contentContainerStyle={{ padding: 16, gap: 3 }} nestedScrollEnabled>
-        <Link onPress={onBack}>‹ Back</Link>
+      <AppBar
+        left={
+          <IconButton label="Back" onPress={onBack}>
+            <BackIcon />
+          </IconButton>
+        }
+        title={folder.name}
+        subtitle={account.email}
+      />
+      <View style={st.head}>
         <Text style={st.subject}>{summary.subject || '(no subject)'}</Text>
-        <Text style={st.meta}>From {from ? who(from) : '(unknown sender)'}</Text>
-        {summary.to.length > 0 && <Text style={st.meta}>To {summary.to.map(who).join(', ')}</Text>}
-        {summary.cc.length > 0 && <Text style={st.meta}>Cc {summary.cc.map(who).join(', ')}</Text>}
-        {summary.date !== null && <Text style={st.meta}>{full.format(summary.date)}</Text>}
+        <Pressable accessibilityRole="button" onPress={() => setDetails(!details)} style={st.senderRow}>
+          <Avatar name={sender} size={40} domain={settings.get().showLogos ? logoDomain(from?.address) : null} />
+          <View style={{ flex: 1 }}>
+            <Text numberOfLines={1} style={st.sender}>
+              {sender}
+            </Text>
+            <Text numberOfLines={1} style={st.meta}>
+              {summary.date !== null ? full.format(summary.date) : ''}
+              {starred ? '  ★' : ''}
+            </Text>
+          </View>
+          <Text style={st.meta}>{details ? 'Hide' : 'Details'}</Text>
+        </Pressable>
+        {details && (
+          <View style={{ gap: 2 }}>
+            {from && <Text style={st.meta}>From {who(from)}</Text>}
+            {summary.to.length > 0 && <Text style={st.meta}>To {summary.to.map(who).join(', ')}</Text>}
+            {summary.cc.length > 0 && <Text style={st.meta}>Cc {summary.cc.map(who).join(', ')}</Text>}
+          </View>
+        )}
         {snoozed !== null && <Note>Snoozed until {full.format(snoozed)}</Note>}
         {risk && risk.level !== 'none' && (
           <View style={[st.warning, risk.level === 'danger' && st.danger]}>
@@ -147,69 +175,94 @@ export default function MessageView({ account, folder, summary, onBack, onCompos
           </View>
         )}
         {page !== null && page.blocked > 0 && !allowImages && <Link onPress={() => setAllowImages(true)}>{`Show ${page.blocked} blocked image${page.blocked === 1 ? '' : 's'} (the sender can tell you opened it)`}</Link>}
-        {attachments.map(({ a, index }) => (
-          <Link key={index} onPress={() => void openAttachment(index)}>{`📎 ${a.filename} (${size(a.size)})`}</Link>
-        ))}
-        {opened?.truncated && <Note>This message is long, so only the first part was downloaded.</Note>}
-        {more && (
-          <View style={st.more}>
-            <Link onPress={() => void run('markUnread', true)}>Mark unread</Link>
-            <Link onPress={() => void run(starred ? 'unstar' : 'star', false)}>{starred ? 'Remove star' : 'Star'}</Link>
-            <Link onPress={() => void run('junk', true)}>Junk</Link>
-            <Link danger onPress={() => Alert.alert('Delete forever?', 'This cannot be undone.', [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: () => void run('delete', true) }])}>
-              Delete forever
-            </Link>
-            {summary.messageId && (
-              <>
-                <Note>Snooze until</Note>
-                <View style={st.wrap}>
-                  <Link onPress={() => snooze(Date.now() + 3 * 3_600_000)}>3 hours</Link>
-                  <Link onPress={() => snooze(at(1, 8))}>Tomorrow</Link>
-                  <Link onPress={() => snooze(at(7, 8))}>Next week</Link>
-                  {snoozed !== null && <Link onPress={() => snooze(null)}>Stop snoozing</Link>}
-                </View>
-                {labels.all.length > 0 && <Note>Labels</Note>}
-                <View style={st.wrap}>
-                  {labels.all.map((l) => (
-                    <Pressable
-                      key={l.id}
-                      accessibilityRole="button"
-                      onPress={() => {
-                        setLabel(items, account.email, summary.messageId!, l.id, !labels.on.has(l.id))
-                        notifyChanged()
-                      }}
-                      style={[st.label, labels.on.has(l.id) && st.labelOn]}
-                    >
-                      <Text style={st.labelText}>{l.name}</Text>
-                    </Pressable>
-                  ))}
-                </View>
-              </>
-            )}
+        {attachments.length > 0 && (
+          <View style={st.chips}>
+            {attachments.map(({ a, index }) => (
+              <Pressable key={index} accessibilityRole="button" onPress={() => void openAttachment(index)} style={st.chip}>
+                <Text numberOfLines={1} style={st.chipText}>
+                  {a.filename} · {size(a.size)}
+                </Text>
+              </Pressable>
+            ))}
           </View>
         )}
-      </ScrollView>
+        {opened?.truncated && <Note>This message is long, so only the first part was downloaded.</Note>}
+      </View>
+
       <View style={{ flex: 1 }}>
         {opened === null && error === null && <ActivityIndicator color={colors.muted} style={{ marginTop: 24 }} />}
-        {error !== null && <ErrorText>{error}</ErrorText>}
+        {error !== null && (
+          <View style={{ padding: 16 }}>
+            <ErrorText>{error}</ErrorText>
+          </View>
+        )}
         {page !== null && <MessageHtml doc={page.doc} />}
       </View>
+
+      <Sheet open={more} onClose={() => setMore(false)}>
+        <MenuItem label="Reply all" onPress={() => reply('replyAll')} />
+        <MenuItem label="Forward" onPress={() => reply('forward')} />
+        <MenuItem label="Mark unread" onPress={() => void run('markUnread', true)} />
+        <MenuItem label={starred ? 'Remove star' : 'Star'} onPress={() => void run(starred ? 'unstar' : 'star', false)} />
+        {summary.messageId && (
+          <View>
+            <MenuLabel>Snooze until</MenuLabel>
+            <MenuItem label="In 3 hours" onPress={() => snooze(Date.now() + 3 * 3_600_000)} />
+            <MenuItem label="Tomorrow morning" onPress={() => snooze(at(1, 8))} />
+            <MenuItem label="Next week" onPress={() => snooze(at(7, 8))} />
+            {snoozed !== null && <MenuItem label="Stop snoozing" onPress={() => snooze(null)} />}
+            {labels.all.length > 0 && <MenuLabel>Labels</MenuLabel>}
+            {labels.all.map((l) => (
+              <MenuItem
+                key={l.id}
+                label={l.name}
+                selected={labels.on.has(l.id)}
+                onPress={() => {
+                  setLabel(items, account.email, summary.messageId!, l.id, !labels.on.has(l.id))
+                  notifyChanged()
+                }}
+              />
+            ))}
+          </View>
+        )}
+        <MenuLabel>Danger</MenuLabel>
+        <MenuItem label="Move to junk" onPress={() => void run('junk', true)} />
+        <MenuItem
+          label="Delete forever"
+          danger
+          onPress={() => {
+            setMore(false)
+            Alert.alert('Delete forever?', 'This cannot be undone.', [{ text: 'Cancel', style: 'cancel' }, { text: 'Delete', style: 'destructive', onPress: () => void run('delete', true) }])
+          }}
+        />
+      </Sheet>
     </Screen>
   )
 }
 
+function Action({ label, onPress, primary }: { label: string; onPress: () => void; primary?: boolean }) {
+  return (
+    <Pressable accessibilityRole="button" onPress={onPress} style={[st.action, primary && st.actionPrimary]}>
+      <Text style={[st.actionText, primary && { color: colors.onAccent, fontWeight: '600' }]}>{label}</Text>
+    </Pressable>
+  )
+}
+
 const st = StyleSheet.create({
-  head: { flexGrow: 0, maxHeight: '45%', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line },
-  subject: { color: colors.text, fontSize: 19, fontWeight: '600' },
-  meta: { color: colors.muted, fontSize: 13 },
-  warning: { borderLeftWidth: 3, borderLeftColor: colors.warn, backgroundColor: colors.raised, padding: 10, marginTop: 6, gap: 2 },
+  head: { paddingHorizontal: 16, paddingVertical: 12, gap: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line },
+  subject: { color: colors.text, fontSize: 20, fontWeight: '600', letterSpacing: -0.2 },
+  senderRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  sender: { color: colors.text, fontSize: 15, fontWeight: '600' },
+  meta: { color: colors.muted, fontSize: 12 },
+  warning: { borderLeftWidth: 3, borderLeftColor: colors.warn, backgroundColor: colors.raised, padding: 10, gap: 2 },
   danger: { borderLeftColor: colors.danger },
   warningTitle: { color: colors.text, fontWeight: '600' },
   warningText: { color: colors.soft, fontSize: 13 },
-  bar: { flexDirection: 'row', flexWrap: 'wrap', gap: 14, paddingHorizontal: 16, paddingVertical: 4, justifyContent: 'space-between', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.line },
-  more: { gap: 4, paddingTop: 6 },
-  wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 14 },
-  label: { borderWidth: StyleSheet.hairlineWidth, borderColor: colors.line, borderRadius: 4, paddingHorizontal: 8, paddingVertical: 3 },
-  labelOn: { backgroundColor: colors.accent, borderColor: colors.accent },
-  labelText: { color: colors.soft, fontSize: 12 }
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  chip: { borderWidth: 1, borderColor: colors.lineStrong, borderRadius: radius, paddingHorizontal: 10, paddingVertical: 6, maxWidth: '100%' },
+  chipText: { color: colors.soft, fontSize: 13 },
+  bar: { flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingVertical: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.line },
+  action: { flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 44, borderRadius: radius, borderWidth: 1, borderColor: colors.line },
+  actionPrimary: { backgroundColor: colors.accent, borderColor: colors.accent },
+  actionText: { color: colors.soft, fontSize: 14, fontWeight: '500' }
 })

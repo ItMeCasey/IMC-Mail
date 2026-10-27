@@ -1,14 +1,15 @@
 import { useState } from 'react'
-import { StyleSheet, Text, TextInput, View } from 'react-native'
+import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
 import * as DocumentPicker from 'expo-document-picker'
 import { File } from 'expo-file-system'
 import { fillTemplate, parseRecipient } from '@imc/core'
 import type { Address, OutgoingAttachment } from '@imc/mail'
 import type { PhoneAccount } from './auth'
+import { AppBar, CloseIcon, IconButton, MenuItem, MenuLabel, Sheet } from './chrome'
 import { items } from './db'
 import { sendMail } from './mail'
 import { describeError, type ComposeStart } from './screens'
-import { Body, Button, colors, ErrorText, Link, Note, Screen } from './ui'
+import { colors, ErrorText, Note, radius, Screen } from './ui'
 
 const parseList = (text: string): Address[] =>
   text
@@ -34,15 +35,16 @@ const htmlToText = (html: string): string =>
     .replace(/\n{3,}/g, '\n\n')
     .trim()
 
+/** Writing a message: a bar with Send, the addressing rows, and a roomy body. */
 export default function Compose({ account, start, onDone }: { account: PhoneAccount; start?: ComposeStart; onDone: () => void }) {
   const [to, setTo] = useState(start?.to ?? '')
   const [cc, setCc] = useState(start?.cc ?? '')
+  const [showCc, setShowCc] = useState(!!start?.cc)
   const [subject, setSubject] = useState(start?.subject ?? '')
   const [text, setText] = useState(start?.text ?? '')
   const [files, setFiles] = useState<OutgoingAttachment[]>([])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [note, setNote] = useState<string | null>(null)
   const [templates, setTemplates] = useState(false)
 
   const templateList = items.list<{ name: string; subject: string; html: string }>('template')
@@ -77,8 +79,7 @@ export default function Compose({ account, start, onDone }: { account: PhoneAcco
     if (bad) return setError(`"${bad.address}" is not an email address.`)
     setBusy(true)
     try {
-      const r = await sendMail(account, { to: toList, cc: ccList, subject, text, attachments: files, inReplyTo: start?.inReplyTo ?? null, references: start?.references ?? [] })
-      if (r === 'queued') setNote('No connection. The message is in the outbox and will go when the phone is online.')
+      await sendMail(account, { to: toList, cc: ccList, subject, text, attachments: files, inReplyTo: start?.inReplyTo ?? null, references: start?.references ?? [] })
       onDone()
     } catch (e) {
       setError(describeError(e))
@@ -87,52 +88,107 @@ export default function Compose({ account, start, onDone }: { account: PhoneAcco
     }
   }
 
-  const footer = (
-    <View style={st.bar}>
-      <Link onPress={onDone}>Discard</Link>
-      <Button onPress={() => void send()} disabled={busy}>
-        {busy ? 'Sending…' : 'Send'}
-      </Button>
-    </View>
-  )
-
   return (
-    <Screen footer={footer}>
-      <Body>
-        <Note>From {account.email}</Note>
-        <Field label="To" value={to} onChange={setTo} keyboard="email-address" />
-        <Field label="Cc" value={cc} onChange={setCc} keyboard="email-address" />
-        <Field label="Subject" value={subject} onChange={setSubject} />
-        <TextInput value={text} onChangeText={setText} multiline placeholder="Write your message" placeholderTextColor={colors.faint} style={[st.input, st.body]} textAlignVertical="top" />
-        {files.map((f, i) => (
-          <Link key={i} onPress={() => setFiles((all) => all.filter((_, j) => j !== i))}>{`📎 ${f.filename} — remove`}</Link>
-        ))}
-        <View style={st.row}>
-          <Link onPress={() => void pick()}>Attach a file</Link>
-          {templateList.length > 0 && <Link onPress={() => setTemplates(!templates)}>Templates</Link>}
+    <Screen>
+      <AppBar
+        left={
+          <IconButton label="Discard" onPress={onDone}>
+            <CloseIcon />
+          </IconButton>
+        }
+        title={start?.subject.startsWith('Re:') ? 'Reply' : start?.subject.startsWith('Fwd:') ? 'Forward' : 'New message'}
+        right={
+          <Pressable accessibilityRole="button" accessibilityLabel="Send" disabled={busy} onPress={() => void send()} style={[st.send, busy && { opacity: 0.5 }]}>
+            <Text style={st.sendText}>{busy ? 'Sending…' : 'Send'}</Text>
+          </Pressable>
+        }
+      />
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ flexGrow: 1 }}>
+          <Row label="From">
+            <Text numberOfLines={1} style={st.fromText}>
+              {account.email}
+            </Text>
+          </Row>
+          <Row label="To">
+            <TextInput value={to} onChangeText={setTo} keyboardType="email-address" autoCapitalize="none" autoCorrect={false} style={st.input} placeholder="name@example.com" placeholderTextColor={colors.faint} />
+            {!showCc && (
+              <Pressable accessibilityRole="button" onPress={() => setShowCc(true)} hitSlop={8}>
+                <Text style={st.link}>Cc</Text>
+              </Pressable>
+            )}
+          </Row>
+          {showCc && (
+            <Row label="Cc">
+              <TextInput value={cc} onChangeText={setCc} keyboardType="email-address" autoCapitalize="none" autoCorrect={false} style={st.input} />
+            </Row>
+          )}
+          <Row label="Subject">
+            <TextInput value={subject} onChangeText={setSubject} style={st.input} />
+          </Row>
+          <TextInput value={text} onChangeText={setText} multiline placeholder="Write your message" placeholderTextColor={colors.faint} style={st.body} textAlignVertical="top" />
+          {files.length > 0 && (
+            <View style={st.chips}>
+              {files.map((f, i) => (
+                <Pressable key={i} accessibilityRole="button" accessibilityLabel={`Remove ${f.filename}`} onPress={() => setFiles((all) => all.filter((_, j) => j !== i))} style={st.chip}>
+                  <Text numberOfLines={1} style={st.chipText}>
+                    {f.filename}  ✕
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
+          {error !== null && (
+            <View style={{ padding: 16 }}>
+              <ErrorText>{error}</ErrorText>
+            </View>
+          )}
+        </ScrollView>
+        <View style={st.tools}>
+          <Pressable accessibilityRole="button" onPress={() => void pick()} style={st.tool}>
+            <Text style={st.toolText}>Attach</Text>
+          </Pressable>
+          {templateList.length > 0 && (
+            <Pressable accessibilityRole="button" onPress={() => setTemplates(true)} style={st.tool}>
+              <Text style={st.toolText}>Templates</Text>
+            </Pressable>
+          )}
+          <Note style={{ marginLeft: 'auto', alignSelf: 'center', fontSize: 12 }}>{files.length > 0 ? `${files.length} attached` : ''}</Note>
         </View>
-        {templates && templateList.map((t) => <Link key={t.id} onPress={() => useTemplate(t.data)}>{t.data.name || '(untitled)'}</Link>)}
-        {error !== null && <ErrorText>{error}</ErrorText>}
-        {note !== null && <Note>{note}</Note>}
-      </Body>
+      </KeyboardAvoidingView>
+
+      <Sheet open={templates} onClose={() => setTemplates(false)}>
+        <MenuLabel>Insert a template</MenuLabel>
+        {templateList.map((t) => (
+          <MenuItem key={t.id} label={t.data.name || '(untitled)'} onPress={() => useTemplate(t.data)} />
+        ))}
+      </Sheet>
     </Screen>
   )
 }
 
-function Field({ label, value, onChange, keyboard }: { label: string; value: string; onChange: (v: string) => void; keyboard?: 'email-address' }) {
+function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <View style={st.field}>
+    <View style={st.row}>
       <Text style={st.label}>{label}</Text>
-      <TextInput value={value} onChangeText={onChange} keyboardType={keyboard} autoCapitalize={keyboard ? 'none' : 'sentences'} autoCorrect={!keyboard} style={[st.input, { flex: 1 }]} placeholderTextColor={colors.faint} />
+      {children}
     </View>
   )
 }
 
 const st = StyleSheet.create({
-  field: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  label: { color: colors.muted, width: 56 },
-  input: { color: colors.text, backgroundColor: colors.raised, borderRadius: 4, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.line, paddingHorizontal: 12, paddingVertical: 9, fontSize: 15 },
-  body: { minHeight: 220 },
-  row: { flexDirection: 'row', gap: 20 },
-  bar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.line }
+  send: { backgroundColor: colors.accent, borderRadius: radius, paddingHorizontal: 16, paddingVertical: 9, marginRight: 8 },
+  sendText: { color: colors.onAccent, fontSize: 14, fontWeight: '600' },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 50, paddingHorizontal: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line },
+  label: { color: colors.muted, fontSize: 14, width: 56 },
+  fromText: { flex: 1, color: colors.soft, fontSize: 15 },
+  input: { flex: 1, color: colors.text, fontSize: 15, paddingVertical: 12 },
+  link: { color: colors.link, fontSize: 14, fontWeight: '500' },
+  body: { flex: 1, minHeight: 240, color: colors.text, fontSize: 16, lineHeight: 23, paddingHorizontal: 16, paddingVertical: 14 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: 16, paddingBottom: 12 },
+  chip: { borderWidth: 1, borderColor: colors.lineStrong, borderRadius: radius, paddingHorizontal: 10, paddingVertical: 6, maxWidth: '100%' },
+  chipText: { color: colors.soft, fontSize: 13 },
+  tools: { flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingVertical: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.line, backgroundColor: colors.rail },
+  tool: { borderWidth: 1, borderColor: colors.line, borderRadius: radius, paddingHorizontal: 14, paddingVertical: 10 },
+  toolText: { color: colors.soft, fontSize: 14, fontWeight: '500' }
 })

@@ -123,7 +123,7 @@ function Shell() {
         </Screen>
       )}
       {navCanForward(nav) && (
-        <Pressable accessibilityRole="button" accessibilityLabel="Forward" onPress={forward} style={[st.forward, { top: insets.top + 6, right: Math.max(insets.right, 0) + 12 }]}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Forward" onPress={forward} style={[st.forward, { bottom: insets.bottom + 76, left: Math.max(insets.left, 0) + 12 }]}>
           <Text style={st.forwardText}>Forward ›</Text>
         </Pressable>
       )}

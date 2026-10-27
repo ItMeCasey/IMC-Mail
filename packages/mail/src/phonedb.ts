@@ -307,9 +307,11 @@ export interface PhoneSettings {
   hideNotificationDetails: boolean
   /** Look for new mail now and then while the app is closed. */
   checkMailInBackground: boolean
+  /** Show the sender's company logo instead of initials, fetched from a favicon service (which learns the sender's domain). */
+  showLogos: boolean
 }
 
-export const DEFAULT_PHONE_SETTINGS: PhoneSettings = { privacyScreen: false, hideNotificationDetails: false, checkMailInBackground: true }
+export const DEFAULT_PHONE_SETTINGS: PhoneSettings = { privacyScreen: false, hideNotificationDetails: false, checkMailInBackground: true, showLogos: true }
 
 /** Choices that belong to this phone and are not synced (the others follow you from device to device). */
 export function phoneSettings(db: SqlDb) {

@@ -6,7 +6,8 @@ import type { SyncDevice, SyncStatus } from '@imc/core'
 import { notifyChanged } from './changes'
 import { pair, sync, syncNow, unpair, watchSync } from './phonesync'
 import { describeError, when } from './screens'
-import { Body, Button, colors, ErrorText, Link, Note, Screen, Title } from './ui'
+import { AppBar, BackIcon, IconButton } from './chrome'
+import { Body, Button, colors, ErrorText, Link, Note, Screen } from './ui'
 
 /** Pairing this phone with the desktop app (scan its QR code or paste the code), and what syncing is doing. */
 export default function Devices({ onBack }: { onBack: () => void }) {
@@ -66,9 +67,8 @@ export default function Devices({ onBack }: { onBack: () => void }) {
 
   return (
     <Screen>
+      <AppBar left={<IconButton label="Back" onPress={onBack}><BackIcon /></IconButton>} title="Devices" />
       <Body refreshing={status.syncing} onRefresh={status.paired ? () => void syncNow() : undefined}>
-        <Link onPress={onBack}>‹ Back</Link>
-        <Title>Devices</Title>
         {status.paired ? (
           <>
             <Note>
