@@ -131,7 +131,7 @@ function Field({ label, value, onChange, keyboard }: { label: string; value: str
 const st = StyleSheet.create({
   field: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   label: { color: colors.muted, width: 56 },
-  input: { color: colors.text, backgroundColor: colors.raised, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, fontSize: 15 },
+  input: { color: colors.text, backgroundColor: colors.raised, borderRadius: 4, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.line, paddingHorizontal: 12, paddingVertical: 9, fontSize: 15 },
   body: { minHeight: 220 },
   row: { flexDirection: 'row', gap: 20 },
   bar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, paddingVertical: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.line }

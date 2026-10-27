@@ -9,7 +9,7 @@ import { flushOutbox } from './mail'
 import { rescheduleReminders, setUpNotifications } from './notify'
 import { applyPrivacy } from './privacy'
 import { sync, syncNow } from './phonesync'
-import { Body, Card, colors, Link, Note, Title } from './ui'
+import { Body, Card, colors, Link, Note, Section, Title } from './ui'
 
 const LEADS = [5, 10, 15, 30, 60]
 
@@ -89,7 +89,7 @@ export default function SettingsScreen({ accounts, onAccountsChanged, onAddAccou
     <Body>
       <Title>Settings</Title>
 
-      <Text style={st.section}>Accounts</Text>
+      <Section>Accounts</Section>
       {accounts.map((a) => (
         <Card key={a.email}>
           <Text style={{ color: colors.text }}>{a.email}</Text>
@@ -101,14 +101,14 @@ export default function SettingsScreen({ accounts, onAccountsChanged, onAddAccou
       ))}
       <Link onPress={onAddAccount}>Add an account</Link>
 
-      <Text style={st.section}>Syncing</Text>
+      <Section>Syncing</Section>
       <Link onPress={onDevices}>{status.paired ? 'Devices (syncing)' : 'Devices — pair with the desktop app'}</Link>
 
-      <Text style={st.section}>Privacy</Text>
+      <Section>Privacy</Section>
       <Toggle label="Hide this app in recent apps" hint="Also blocks screenshots and screen recording" value={local.privacyScreen} onChange={(v) => change({ privacyScreen: v })} />
       <Toggle label="Hide message details in notifications" hint="Shows only “New message”" value={local.hideNotificationDetails} onChange={(v) => change({ hideNotificationDetails: v })} />
 
-      <Text style={st.section}>Notifications</Text>
+      <Section>Notifications</Section>
       <Toggle label="Notifications" value={notify.enabled} onChange={(v) => setNotify({ enabled: v })} />
       <Toggle label="Check for new mail in the background" hint="About every 15 minutes or more, when Android allows" value={local.checkMailInBackground} onChange={(v) => change({ checkMailInBackground: v })} />
       <Toggle label="Quiet hours" hint={`${notify.quietHours.start} to ${notify.quietHours.end}`} value={notify.quietHours.enabled} onChange={(v) => setNotify({ quietHours: { ...notify.quietHours, enabled: v } })} />
@@ -133,7 +133,7 @@ export default function SettingsScreen({ accounts, onAccountsChanged, onAddAccou
         Allow notifications
       </Link>
 
-      <Text style={st.section}>Calendar</Text>
+      <Section>Calendar</Section>
       <Toggle label="Show holidays" value={prefs.showHolidays} onChange={(v) => pref({ showHolidays: v })} />
       <Toggle label="Holiday reminders" value={prefs.holidayReminders} onChange={(v) => pref({ holidayReminders: v })} />
       <View style={st.leads}>
@@ -141,7 +141,7 @@ export default function SettingsScreen({ accounts, onAccountsChanged, onAddAccou
         <TextInput value={country} onChangeText={saveCountry} maxLength={2} autoCapitalize="characters" autoCorrect={false} style={st.country} />
       </View>
 
-      <Text style={st.section}>Outbox</Text>
+      <Section>Outbox</Section>
       <Note>{outbox === 0 ? 'Nothing waiting to send.' : `${outbox} message${outbox === 1 ? '' : 's'} waiting for a connection.`}</Note>
       {outbox > 0 && (
         <Link
@@ -163,8 +163,7 @@ export default function SettingsScreen({ accounts, onAccountsChanged, onAddAccou
 }
 
 const st = StyleSheet.create({
-  section: { color: colors.soft, fontSize: 13, fontWeight: '600', textTransform: 'uppercase', marginTop: 10 },
   toggle: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   leads: { flexDirection: 'row', alignItems: 'center', gap: 14, flexWrap: 'wrap' },
-  country: { color: colors.text, backgroundColor: colors.raised, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 6, width: 60, textAlign: 'center' }
+  country: { color: colors.text, backgroundColor: colors.raised, borderRadius: 4, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.line, paddingHorizontal: 12, paddingVertical: 6, width: 60, textAlign: 'center' }
 })

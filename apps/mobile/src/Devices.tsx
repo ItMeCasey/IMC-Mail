@@ -122,7 +122,7 @@ export default function Devices({ onBack }: { onBack: () => void }) {
 }
 
 const st = StyleSheet.create({
-  device: { backgroundColor: colors.raised, borderRadius: 8, padding: 12, gap: 2 },
-  camera: { height: 300, borderRadius: 8, overflow: 'hidden' },
-  input: { color: colors.text, backgroundColor: colors.raised, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8 }
+  device: { backgroundColor: colors.raised, borderRadius: 4, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.line, padding: 12, gap: 2 },
+  camera: { height: 300, borderRadius: 4, overflow: 'hidden' },
+  input: { color: colors.text, backgroundColor: colors.raised, borderRadius: 4, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.line, paddingHorizontal: 12, paddingVertical: 9 }
 })

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ActivityIndicator, FlatList, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native'
-import { labelsByMessage, listLabels, newMailToNotify, searchSummaries, snoozedNow, type Folder, type Summary } from '@imc/mail'
+import { classify } from '@imc/core'
+import { appPrefs, labelsByMessage, listLabels, newMailToNotify, searchSummaries, snoozedNow, type Folder, type Summary } from '@imc/mail'
 import type { PhoneAccount } from './auth'
 import { notifyChanged, useChanged } from './changes'
 import { items } from './db'
@@ -8,7 +9,7 @@ import { actOn, folderKey, lastSynced, refreshFolder, refreshFolders, savedFolde
 import { mailAllowed, notifyNewMail } from './notify'
 import { describeError, newId, when } from './screens'
 import { tell } from './report'
-import { Button, colors, ErrorText, Link, Note, s } from './ui'
+import { Button, colors, ErrorText, Link, Note, radius, s, tapeFor } from './ui'
 
 /** Coming back to a folder within this long of its last update does not ask the server again; pulling down always does. */
 const FRESH_MS = 60_000
@@ -88,6 +89,13 @@ export default function MailList({ accounts, selected, onSelect, onOpen, onCompo
     void changed
     return items.list<{ name: string; query: string }>('savedSearch').map((x) => ({ id: x.id, ...x.data }))
   }, [changed])
+
+  // A colored mark down the edge of a row for the kind of mail (sponsorship, invoice, ...), when streamer features are on.
+  const streamer = useMemo(() => {
+    void changed
+    return appPrefs(items).streamerFeatures
+  }, [changed])
+  const tape = (m: Summary): string | null => (streamer ? tapeFor(classify({ fromAddr: m.from?.address ?? '', fromName: m.from?.name ?? '', subject: m.subject }).category) : null)
 
   const toggle = (uid: number) =>
     setChosen((c) => {
@@ -203,17 +211,20 @@ export default function MailList({ accounts, selected, onSelect, onOpen, onCompo
           const tags = (m.messageId ? (labels?.byMessage.get(m.messageId) ?? []) : []).map((id) => labels?.names.get(id)).filter(Boolean)
           return (
             <Pressable accessibilityRole="button" onPress={() => (selecting ? toggle(m.uid) : folder && onOpen(account, folder, m))} onLongPress={() => toggle(m.uid)} style={[st.row, on && st.rowOn]}>
-              <View style={st.rowHead}>
-                <Text numberOfLines={1} style={[st.from, unread && st.unread]}>
-                  {m.flags.includes('\\Flagged') ? '★ ' : ''}
-                  {m.from?.name || m.from?.address || '(unknown sender)'}
+              <View style={[st.tape, { backgroundColor: tape(m) ?? (unread ? colors.accent : 'transparent') }]} />
+              <View style={st.rowBody}>
+                <View style={st.rowHead}>
+                  <Text numberOfLines={1} style={[st.from, unread && st.unread]}>
+                    {m.flags.includes('\\Flagged') ? '★ ' : ''}
+                    {m.from?.name || m.from?.address || '(unknown sender)'}
+                  </Text>
+                  <Text style={st.when}>{when(m.date)}</Text>
+                </View>
+                <Text numberOfLines={1} style={[st.subject, unread && st.unread]}>
+                  {m.subject || '(no subject)'}
                 </Text>
-                <Text style={st.when}>{when(m.date)}</Text>
+                {tags.length > 0 && <Text style={st.tags}>{tags.join(' · ')}</Text>}
               </View>
-              <Text numberOfLines={1} style={[st.subject, unread && st.unread]}>
-                {m.subject || '(no subject)'}
-              </Text>
-              {tags.length > 0 && <Text style={st.tags}>{tags.join(' · ')}</Text>}
             </Pressable>
           )
         }}
@@ -234,25 +245,27 @@ export default function MailList({ accounts, selected, onSelect, onOpen, onCompo
 
 const st = StyleSheet.create({
   empty: { flex: 1, padding: 16, gap: 12, justifyContent: 'center' },
-  head: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingVertical: 8, alignItems: 'center' },
-  chip: { backgroundColor: colors.raised, borderRadius: 16, paddingHorizontal: 12, paddingVertical: 7, flexShrink: 1 },
-  chipText: { color: colors.soft, fontSize: 13 },
-  write: { marginLeft: 'auto', backgroundColor: colors.accent, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 7 },
-  writeText: { color: colors.text, fontSize: 13, fontWeight: '600' },
-  panel: { marginHorizontal: 16, padding: 10, backgroundColor: colors.raised, borderRadius: 8, marginBottom: 6 },
-  searchRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingBottom: 6 },
-  search: { flex: 1, color: colors.text, backgroundColor: colors.raised, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, fontSize: 14 },
-  searches: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingHorizontal: 16, paddingBottom: 6 },
-  saved: { borderWidth: StyleSheet.hairlineWidth, borderColor: colors.line, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4 },
+  head: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingVertical: 10, alignItems: 'center' },
+  chip: { borderWidth: StyleSheet.hairlineWidth, borderColor: colors.lineStrong, borderRadius: radius, paddingHorizontal: 10, paddingVertical: 6, flexShrink: 1 },
+  chipText: { color: colors.soft, fontSize: 13, fontWeight: '500' },
+  write: { marginLeft: 'auto', backgroundColor: colors.accent, borderRadius: radius, paddingHorizontal: 14, paddingVertical: 7 },
+  writeText: { color: colors.onAccent, fontSize: 13, fontWeight: '600' },
+  panel: { marginHorizontal: 16, paddingHorizontal: 12, paddingVertical: 6, backgroundColor: colors.raised, borderRadius: radius, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.line, marginBottom: 6 },
+  searchRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 16, paddingBottom: 8 },
+  search: { flex: 1, color: colors.text, backgroundColor: colors.raised, borderRadius: radius, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.line, paddingHorizontal: 12, paddingVertical: 8, fontSize: 14 },
+  searches: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingHorizontal: 16, paddingBottom: 8 },
+  saved: { borderWidth: StyleSheet.hairlineWidth, borderColor: colors.line, borderRadius: radius, paddingHorizontal: 8, paddingVertical: 3 },
   savedText: { color: colors.muted, fontSize: 12 },
-  row: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line, paddingVertical: 10, paddingHorizontal: 16, gap: 2 },
-  rowOn: { backgroundColor: '#1d3350' },
+  row: { flexDirection: 'row', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.line },
+  rowOn: { backgroundColor: colors.selected },
+  tape: { width: 3 },
+  rowBody: { flex: 1, paddingVertical: 10, paddingHorizontal: 13, gap: 2 },
   rowHead: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
   from: { color: colors.soft, fontSize: 15, flex: 1 },
   subject: { color: colors.muted, fontSize: 14 },
   unread: { color: colors.text, fontWeight: '600' },
-  when: { color: colors.faint, fontSize: 12 },
+  when: { color: colors.faint, fontSize: 12, fontVariant: ['tabular-nums'] },
   tags: { color: colors.warn, fontSize: 12 },
-  bar: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, paddingVertical: 6, backgroundColor: colors.raised, flexWrap: 'wrap' },
-  barText: { color: colors.text, marginRight: 'auto' }
+  bar: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: 16, paddingVertical: 6, backgroundColor: colors.rail, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.line, flexWrap: 'wrap' },
+  barText: { color: colors.text, marginRight: 'auto', fontWeight: '600' }
 })

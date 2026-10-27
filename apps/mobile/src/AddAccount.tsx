@@ -38,11 +38,15 @@ export default function AddAccount({ onAdded, onBack }: { onAdded: (a: PhoneAcco
     }
   }
 
+  /** Server names follow the address (imap.<domain>, smtp.<domain>) until the person types their own. */
+  const [edited, setEdited] = useState(false)
   const guess = (address: string) => {
     setEmail(address)
     const domain = address.split('@')[1]
-    if (domain && !inHost) setInHost(`${protocol === 'pop3' ? 'pop' : 'imap'}.${domain}`)
-    if (domain && !outHost) setOutHost(`smtp.${domain}`)
+    if (domain && !edited) {
+      setInHost(`${protocol === 'pop3' ? 'pop' : 'imap'}.${domain}`)
+      setOutHost(`smtp.${domain}`)
+    }
   }
 
   const choose = (p: 'imap' | 'pop3') => {
@@ -50,7 +54,7 @@ export default function AddAccount({ onAdded, onBack }: { onAdded: (a: PhoneAcco
     setInPort(p === 'imap' ? '993' : '995')
     setInSecurity('tls')
     const domain = email.split('@')[1]
-    if (domain) setInHost(`${p === 'pop3' ? 'pop' : 'imap'}.${domain}`)
+    if (domain && !edited) setInHost(`${p === 'pop3' ? 'pop' : 'imap'}.${domain}`)
   }
 
   const save = async () => {
@@ -122,12 +126,12 @@ export default function AddAccount({ onAdded, onBack }: { onAdded: (a: PhoneAcco
               <Link onPress={() => choose('imap')}>{protocol === 'imap' ? '● IMAP' : '○ IMAP'}</Link>
               <Link onPress={() => choose('pop3')}>{protocol === 'pop3' ? '● POP3' : '○ POP3'}</Link>
             </View>
-            <Input label="Incoming server" value={inHost} onChange={setInHost} />
+            <Input label="Incoming server" value={inHost} onChange={(v) => (setEdited(true), setInHost(v))} />
             <View style={st.row}>
               <Input label="Port" value={inPort} onChange={setInPort} keyboard="number-pad" />
               <Link onPress={() => setInSecurity(inSecurity === 'tls' ? 'starttls' : 'tls')}>{inSecurity === 'tls' ? 'TLS' : 'STARTTLS'}</Link>
             </View>
-            <Input label="Outgoing server (SMTP)" value={outHost} onChange={setOutHost} />
+            <Input label="Outgoing server (SMTP)" value={outHost} onChange={(v) => (setEdited(true), setOutHost(v))} />
             <View style={st.row}>
               <Input label="Port" value={outPort} onChange={setOutPort} keyboard="number-pad" />
               <Link onPress={() => setOutSecurity(outSecurity === 'tls' ? 'starttls' : 'tls')}>{outSecurity === 'tls' ? 'TLS' : 'STARTTLS'}</Link>
@@ -154,6 +158,6 @@ function Input({ label, value, onChange, secret, keyboard }: { label: string; va
 
 const st = StyleSheet.create({
   label: { color: colors.muted, fontSize: 13 },
-  input: { color: colors.text, backgroundColor: colors.raised, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 8, fontSize: 15 },
+  input: { color: colors.text, backgroundColor: colors.raised, borderRadius: 4, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.line, paddingHorizontal: 12, paddingVertical: 9, fontSize: 15 },
   row: { flexDirection: 'row', gap: 20, alignItems: 'flex-end' }
 })

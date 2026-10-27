@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import Constants from 'expo-constants'
-import { StatusBar } from 'expo-status-bar'
+import { colors } from './ui'
 import sanitizeHtml from 'sanitize-html'
 import {
   assess,
@@ -99,7 +99,7 @@ export default function Diagnostics({ onBack }: { onBack: () => void }) {
 
   return (
     <View style={s.root}>
-      <StatusBar style="auto" />
+      
       <ScrollView contentContainerStyle={s.body}>
         <Pressable accessibilityRole="button" onPress={onBack}>
           <Text style={s.note}>Back</Text>
@@ -124,13 +124,13 @@ export default function Diagnostics({ onBack }: { onBack: () => void }) {
 }
 
 const s = StyleSheet.create({
-  root: { flex: 1, backgroundColor: '#101418' },
+  root: { flex: 1, backgroundColor: colors.bg },
   body: { padding: 20, paddingTop: 56, gap: 12 },
-  title: { color: '#f2f4f7', fontSize: 22, fontWeight: '600' },
-  note: { color: '#9aa4b2', marginBottom: 8 },
+  title: { color: colors.text, fontSize: 22, fontWeight: '600' },
+  note: { color: colors.muted, marginBottom: 8 },
   card: { gap: 6 },
-  primary: { backgroundColor: '#2b6cb0' },
-  button: { backgroundColor: '#1d2733', borderRadius: 8, padding: 14 },
-  buttonText: { color: '#f2f4f7', fontSize: 16 },
-  result: { color: '#c7d0dc', fontFamily: 'monospace', fontSize: 12 }
+  primary: { backgroundColor: colors.accent },
+  button: { backgroundColor: colors.raised, borderRadius: 4, padding: 14 },
+  buttonText: { color: colors.text, fontSize: 16 },
+  result: { color: colors.soft, fontFamily: 'monospace', fontSize: 12 }
 })

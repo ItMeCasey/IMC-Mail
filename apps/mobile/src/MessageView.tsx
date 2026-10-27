@@ -200,14 +200,14 @@ const st = StyleSheet.create({
   head: { flexGrow: 0, maxHeight: '45%', borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.line },
   subject: { color: colors.text, fontSize: 19, fontWeight: '600' },
   meta: { color: colors.muted, fontSize: 13 },
-  warning: { backgroundColor: '#3a3320', borderRadius: 8, padding: 10, marginTop: 6, gap: 2 },
-  danger: { backgroundColor: '#3d2222' },
+  warning: { borderLeftWidth: 3, borderLeftColor: colors.warn, backgroundColor: colors.raised, padding: 10, marginTop: 6, gap: 2 },
+  danger: { borderLeftColor: colors.danger },
   warningTitle: { color: colors.text, fontWeight: '600' },
-  warningText: { color: colors.warn, fontSize: 13 },
+  warningText: { color: colors.soft, fontSize: 13 },
   bar: { flexDirection: 'row', flexWrap: 'wrap', gap: 14, paddingHorizontal: 16, paddingVertical: 4, justifyContent: 'space-between', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.line },
   more: { gap: 4, paddingTop: 6 },
   wrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 14 },
-  label: { borderWidth: StyleSheet.hairlineWidth, borderColor: colors.line, borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4 },
-  labelOn: { backgroundColor: colors.accent },
-  labelText: { color: colors.text, fontSize: 12 }
+  label: { borderWidth: StyleSheet.hairlineWidth, borderColor: colors.line, borderRadius: 4, paddingHorizontal: 8, paddingVertical: 3 },
+  labelOn: { backgroundColor: colors.accent, borderColor: colors.accent },
+  labelText: { color: colors.soft, fontSize: 12 }
 })

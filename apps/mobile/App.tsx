@@ -19,7 +19,7 @@ import { startSyncLoop, syncNow } from './src/phonesync'
 import { applyPrivacy } from './src/privacy'
 import type { Screen as ScreenName, Tab } from './src/screens'
 import SettingsScreen from './src/SettingsScreen'
-import { colors, Screen, TabBar } from './src/ui'
+import { colors, isLight, Screen, TabBar } from './src/ui'
 
 export default function App() {
   return (
@@ -95,7 +95,7 @@ function Shell() {
 
   return (
     <View style={st.root}>
-      <StatusBar style="light" />
+      <StatusBar style={isLight ? 'dark' : 'light'} />
       {screen.name === 'tab' && (
         <Screen footer={<TabBar tabs={TABS} current={screen.tab} onSelect={(id) => tab(id as Tab)} />}>
           {screen.tab === 'mail' && (
@@ -133,6 +133,6 @@ function Shell() {
 
 const st = StyleSheet.create({
   root: { flex: 1, backgroundColor: colors.bg },
-  forward: { position: 'absolute', backgroundColor: colors.raised, borderRadius: 16, paddingHorizontal: 12, paddingVertical: 6 },
+  forward: { position: 'absolute', backgroundColor: colors.raised, borderRadius: 4, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.lineStrong, paddingHorizontal: 10, paddingVertical: 5 },
   forwardText: { color: colors.link, fontSize: 13 }
 })
