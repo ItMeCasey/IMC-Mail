@@ -1,0 +1,20 @@
+{
+  "name": "@imc/mail",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Mail protocols for the phone: an IMAP client over a socket that is passed in, so it runs in React Native and in tests",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "postal-mime": "^4.1.4"
+  },
+  "devDependencies": {
+    "vitest": "^5.0.5"
+  }
+}
