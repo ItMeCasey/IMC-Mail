@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Bell, Bug, CalendarDays, Download, HardDrive, ListFilter, Mail, Palette, Plus, ShieldCheck, SlidersHorizontal, Trash2, Upload, Users, X, type LucideIcon } from 'lucide-react'
-import type { Account, StreamSafeState } from '@imc/core'
+import { Bell, Bug, CalendarDays, Download, HardDrive, ListFilter, Mail, Minus, Palette, Plus, ShieldCheck, SlidersHorizontal, Square, Trash2, Upload, Users, X, type LucideIcon } from 'lucide-react'
+import type { Account } from '@imc/core'
 import StreamSafeControl from './StreamSafeControl'
 import ThemeSwitch from './ThemeSwitch'
+import { useStreamSafe } from './streamsafe'
 
+const ctl = 'grid h-10 w-11 place-items-center text-ink-2 transition-colors duration-(--dur-fast) hover:bg-hover hover:text-ink focus-visible:-outline-offset-2'
 const row =
   'flex h-9 w-full items-center gap-2 rounded-md border border-line-strong px-3 text-left text-ink transition-colors duration-(--dur-fast) hover:bg-hover'
 
@@ -183,28 +185,10 @@ function Holidays() {
   )
 }
 
-/** Everything that is a setting rather than mail, in one place. */
-export default function SettingsDialog({
-  streamSafe,
-  accounts,
-  onRename,
-  onRemove,
-  onAddAccount,
-  onRules,
-  onNotifications,
-  onReport,
-  onClose
-}: {
-  streamSafe: StreamSafeState
-  accounts: Account[]
-  onRename: (id: string, name: string) => void
-  onRemove: (account: Account) => void
-  onAddAccount: () => void
-  onRules: () => void
-  onNotifications: () => void
-  onReport: () => void
-  onClose: () => void
-}) {
+/** Everything that is a setting rather than mail, in one window of its own. */
+export default function SettingsWindow() {
+  const streamSafe = useStreamSafe()
+  const accounts = useQuery({ queryKey: ['accounts'], queryFn: () => window.imc.invoke('accounts:list') }).data ?? []
   const qc = useQueryClient()
   const [backupNote, setBackupNote] = useState<string | null>(null)
   const info = useQuery({ queryKey: ['appinfo'], queryFn: () => window.imc.invoke('app:info') })
@@ -237,15 +221,26 @@ export default function SettingsDialog({
   }
   const prefs = useQuery({ queryKey: ['prefs'], queryFn: () => window.imc.invoke('app:prefs') })
   const streamer = prefs.data?.streamerFeatures ?? true
-  const dialog = useRef<HTMLDialogElement>(null)
+  const qcAll = qc
+  // The other window changes things too (an account removed, a rule added): look again when this one is used.
   useEffect(() => {
-    dialog.current?.showModal()
+    const again = () => void qcAll.invalidateQueries()
+    window.addEventListener('focus', again)
+    return () => window.removeEventListener('focus', again)
+  }, [qcAll])
+  const control = (action: 'minimize' | 'maximize' | 'close') => void window.imc.invoke('settings:control', { action })
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') control('close')
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
   }, [])
-  /** Closes this panel, then opens the dialog for the chosen setting. */
-  const go = (open: () => void) => () => {
-    dialog.current?.close()
-    open()
-  }
+  /** These dialogs live in the main window: ask it to open one. */
+  const ask = (kind: 'rules' | 'notifications' | 'report' | 'addAccount') => () => void window.imc.invoke('settings:action', { kind })
+  const onRename = (id: string, displayName: string) =>
+    void window.imc.invoke('accounts:rename', { id, displayName }).then(() => qc.invalidateQueries({ queryKey: ['accounts'] }))
+  const onRemove = (a: Account) => void window.imc.invoke('settings:action', { kind: 'removeAccount', accountId: a.id })
 
   const [tab, setTab] = useState<TabId>('general')
   const tabs = TABS.filter((t) => t.id !== 'streamsafe' || streamer)
@@ -261,24 +256,22 @@ export default function SettingsDialog({
   }
 
   return (
-    <dialog
-      ref={dialog}
-      onClose={onClose}
-      aria-labelledby="settings-title"
-      className="m-auto h-[min(40rem,calc(100vh-4rem))] w-[min(52rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-md border border-line-strong bg-raised p-0 text-ink open:flex"
-    >
-      <header className="flex h-12 shrink-0 items-center border-b border-line px-4">
-        <h2 id="settings-title" className="flex-1 text-md font-semibold">
+    <div role="dialog" aria-labelledby="settings-title" className="flex h-screen flex-col overflow-hidden bg-raised text-ink">
+      <header className="flex h-10 shrink-0 items-center border-b border-line bg-rail" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
+        <h2 id="settings-title" className="flex-1 px-4 text-sm font-medium text-ink-2 select-none">
           Settings
         </h2>
-        <button
-          className="grid size-8 place-items-center rounded-md text-ink-2 hover:bg-hover hover:text-ink"
-          aria-label="Close settings"
-          title="Close"
-          onClick={() => dialog.current?.close()}
-        >
-          <X size={16} strokeWidth={1.75} aria-hidden />
-        </button>
+        <div className="flex" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+          <button className={ctl} aria-label="Minimize" title="Minimize" onClick={() => control('minimize')}>
+            <Minus size={14} strokeWidth={1.75} aria-hidden />
+          </button>
+          <button className={ctl} aria-label="Maximize" title="Maximize" onClick={() => control('maximize')}>
+            <Square size={12} strokeWidth={1.75} aria-hidden />
+          </button>
+          <button className={`${ctl} hover:text-alert`} aria-label="Close settings" title="Close" onClick={() => control('close')}>
+            <X size={15} strokeWidth={1.75} aria-hidden />
+          </button>
+        </div>
       </header>
 
       <div className="flex min-h-0 flex-1">
@@ -362,11 +355,11 @@ export default function SettingsDialog({
 
           {current === 'mail' && (
             <Section title="Mail">
-              <button className={row} onClick={go(onNotifications)}>
+              <button className={row} onClick={ask('notifications')}>
                 <Bell size={16} strokeWidth={1.75} aria-hidden />
                 Notifications
               </button>
-              <button className={row} onClick={go(onRules)}>
+              <button className={row} onClick={ask('rules')}>
                 <ListFilter size={16} strokeWidth={1.75} aria-hidden />
                 Rules
               </button>
@@ -393,7 +386,7 @@ export default function SettingsDialog({
                 </ul>
               )}
               <p className="text-xs text-ink-3">The name shows in the sidebar and as the sender name on mail you send.</p>
-              <button className={row} onClick={go(onAddAccount)}>
+              <button className={row} onClick={ask('addAccount')}>
                 <Plus size={16} strokeWidth={1.75} aria-hidden />
                 Add account
               </button>
@@ -454,7 +447,7 @@ export default function SettingsDialog({
               </Section>
 
               <Section title="Help">
-                <button className={row} onClick={go(onReport)}>
+                <button className={row} onClick={ask('report')}>
                   <Bug size={16} strokeWidth={1.75} aria-hidden />
                   Report a problem
                 </button>
@@ -463,6 +456,6 @@ export default function SettingsDialog({
           )}
         </div>
       </div>
-    </dialog>
+    </div>
   )
 }

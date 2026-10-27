@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query'
+import { QueryClientProvider, useQueryClient } from '@tanstack/react-query'
 import { CATEGORY_LABELS, type Draft, type Folder, type MessageAction, type ReplyMode, type UndoMove } from '@imc/core'
 import Agenda from './Agenda'
 import DealsBoard from './DealsBoard'
@@ -11,7 +11,7 @@ import type { BulkAction } from './BulkBar'
 import RulesDialog from './RulesDialog'
 import FolderNameDialog from './FolderNameDialog'
 import ReportDialog from './ReportDialog'
-import SettingsDialog from './SettingsDialog'
+import { queryClient } from './queryClient'
 import NotificationSettingsDialog from './NotificationSettings'
 import AddAccount from './AddAccount'
 import Composer, { signatureHtml } from './Composer'
@@ -40,10 +40,6 @@ import {
   type Selection
 } from './hooks'
 
-const queryClient = new QueryClient({
-  defaultOptions: { queries: { staleTime: Infinity, refetchOnWindowFocus: false } }
-})
-
 function Shell() {
   const qc = useQueryClient()
   const accounts = useAccounts()
@@ -62,7 +58,6 @@ function Shell() {
   const [renaming, setRenaming] = useState<Folder | null>(null)
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const anchor = useRef<string | null>(null)
-  const [settingsOpen, setSettingsOpen] = useState(false)
   const [reporting, setReporting] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [undo, setUndo] = useState<UndoMove | null>(null)
@@ -154,10 +149,37 @@ function Shell() {
 
   // The gear in the title bar (outside this component) asks for the settings panel.
   useEffect(() => {
-    const open = () => setSettingsOpen(true)
+    const open = () => void window.imc.invoke('settings:open')
     window.addEventListener('imc:open-settings', open)
     return () => window.removeEventListener('imc:open-settings', open)
   }, [])
+
+  // The settings window asks for dialogs that live here. Kept in a ref so the subscription is made once.
+  const onSettingsAction = useRef<(a: { kind: string; accountId?: string | undefined }) => void>(() => {})
+  onSettingsAction.current = ({ kind, accountId }) => {
+    if (kind === 'notifications') setNotifOpen(true)
+    else if (kind === 'report') setReporting(true)
+    else if (kind === 'addAccount') hide ? blocked() : setAdding(true)
+    else if (kind === 'rules') hide ? blocked() : setRulesOpen(true)
+    else if (kind === 'removeAccount') {
+      const a = (accounts.data ?? []).find((x) => x.id === accountId)
+      if (!a) return
+      void askConfirm({
+        title: 'Remove this account?',
+        message: `${a.email} and its cached mail are removed from this computer. Nothing is deleted on the mail server.`,
+        confirmLabel: 'Remove account',
+        danger: true
+      }).then((ok) => (ok ? remove(a.id) : undefined))
+    }
+  }
+  useEffect(() => window.imc.on('settings:action', (a) => onSettingsAction.current(a)), [])
+
+  // Settings are changed in a window of their own: look again at everything when this one is used.
+  useEffect(() => {
+    const again = () => void qc.invalidateQueries()
+    window.addEventListener('focus', again)
+    return () => window.removeEventListener('focus', again)
+  }, [qc])
 
   // Close anything that shows private content the moment the mode turns on.
   useEffect(() => {
@@ -563,7 +585,7 @@ function Shell() {
   const STREAMER_COMMANDS = ['kit', 'ss', 'g-board']
   const commands: Command[] = [
     { id: 'compose', label: 'Compose a new message', group: 'Action', run: newMessage },
-    { id: 'settings', label: 'Open settings', group: 'Action', run: () => setSettingsOpen(true) },
+    { id: 'settings', label: 'Open settings', group: 'Action', run: () => void window.imc.invoke('settings:open') },
     { id: 'add', label: 'Add an account', group: 'Action', run: () => (hide ? blocked() : setAdding(true)) },
     { id: 'rules', label: 'Open rules', group: 'Action', run: () => (hide ? blocked() : setRulesOpen(true)) },
     { id: 'notif', label: 'Notification settings', group: 'Action', run: () => setNotifOpen(true) },
@@ -792,28 +814,6 @@ function Shell() {
         />
       )}
       {reporting && <ReportDialog onClose={() => setReporting(false)} />}
-      {settingsOpen && (
-        <SettingsDialog
-          streamSafe={stream}
-          accounts={accounts.data ?? []}
-          onRename={(id, displayName) =>
-            void window.imc.invoke('accounts:rename', { id, displayName }).then(() => qc.invalidateQueries({ queryKey: ['accounts'] }))
-          }
-          onRemove={(a) =>
-            void askConfirm({
-              title: 'Remove this account?',
-              message: `${a.email} and its cached mail are removed from this computer. Nothing is deleted on the mail server.`,
-              confirmLabel: 'Remove account',
-              danger: true
-            }).then((ok) => (ok ? remove(a.id) : undefined))
-          }
-          onAddAccount={() => (hide ? blocked() : setAdding(true))}
-          onRules={() => (hide ? blocked() : setRulesOpen(true))}
-          onNotifications={() => setNotifOpen(true)}
-          onReport={() => setReporting(true)}
-          onClose={() => setSettingsOpen(false)}
-        />
-      )}
       {rulesOpen && !hide && <RulesDialog onClose={() => setRulesOpen(false)} />}
       {notifOpen && <NotificationSettingsDialog onClose={() => setNotifOpen(false)} />}
       {adding && <AddAccount onClose={() => setAdding(false)} />}

@@ -34,6 +34,15 @@ export function initTheme(): void {
   )
 }
 
+// The settings window and the main window share storage: a theme picked in one shows in the other at once.
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (e) => {
+    if (e.key !== KEY || !isTheme(e.newValue)) return
+    document.documentElement.dataset['theme'] = e.newValue
+    listeners.forEach((l) => l())
+  })
+}
+
 export function setTheme(theme: Theme): void {
   document.documentElement.dataset['theme'] = theme
   try {

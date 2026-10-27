@@ -94,6 +94,55 @@ function reportMaximized(m: boolean): void {
   emit('window:state', { maximized: m })
 }
 
+let mainWin: BrowserWindow | null = null
+let settingsWin: BrowserWindow | null = null
+
+/** Settings live in a window of their own: a normal window with its own title bar that can be moved and resized anywhere. */
+function openSettingsWindow(): void {
+  if (settingsWin && !settingsWin.isDestroyed()) {
+    if (settingsWin.isMinimized()) settingsWin.restore()
+    settingsWin.show()
+    settingsWin.focus()
+    return
+  }
+  const win = new BrowserWindow({
+    width: 880,
+    height: 640,
+    minWidth: 640,
+    minHeight: 440,
+    show: false,
+    title: 'IMC-Mail settings',
+    icon: appIcon,
+    frame: false,
+    backgroundColor: '#1a1a1a',
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true
+    }
+  })
+  settingsWin = win
+  win.removeMenu()
+  win.setContentProtection(!!streamSafe && streamSafe.state.active && streamSafe.state.hideFromCapture)
+  win.once('ready-to-show', () => win.show())
+  win.on('closed', () => {
+    if (settingsWin === win) settingsWin = null
+  })
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^(https?:\/\/|mailto:)/i.test(url)) void shell.openExternal(url)
+    return { action: 'deny' }
+  })
+  win.webContents.on('will-navigate', (e, url) => {
+    if (url !== win.webContents.getURL()) e.preventDefault()
+  })
+  if (process.env['ELECTRON_RENDERER_URL']) {
+    void win.loadURL(`${process.env['ELECTRON_RENDERER_URL']}#settings`)
+  } else {
+    void win.loadFile(join(__dirname, '../renderer/index.html'), { hash: 'settings' })
+  }
+}
+
 function createWindow(): void {
   const win = new BrowserWindow({
     width: 1280,
@@ -116,6 +165,12 @@ function createWindow(): void {
     }
   })
 
+  mainWin = win
+  win.on('closed', () => {
+    mainWin = null
+    // Settings belong to the main window: closing it for good closes them too.
+    if (settingsWin && !settingsWin.isDestroyed()) settingsWin.destroy()
+  })
   win.setContentProtection(!!streamSafe && streamSafe.state.active && streamSafe.state.hideFromCapture)
   win.once('ready-to-show', () => win.show())
   // With "keep running in the tray" on, the close button hides the window instead of quitting.
@@ -598,8 +653,25 @@ app.whenReady().then(async () => {
       const { mediaKit: _gone, ...rest } = readSettings()
       writeFileSync(settingsFile, JSON.stringify(rest, null, 2))
     },
+    'settings:open': () => {
+      openSettingsWindow()
+    },
+    'settings:action': (a) => {
+      // The dialogs these open belong to the main window: bring it forward, then tell it which one.
+      if (!mainWin || mainWin.isDestroyed()) return
+      if (mainWin.isMinimized()) mainWin.restore()
+      mainWin.show()
+      mainWin.focus()
+      emit('settings:action', a)
+    },
+    'settings:control': ({ action }) => {
+      if (!settingsWin || settingsWin.isDestroyed()) return
+      if (action === 'minimize') settingsWin.minimize()
+      else if (action === 'maximize') settingsWin.isMaximized() ? settingsWin.unmaximize() : settingsWin.maximize()
+      else settingsWin.close()
+    },
     'window:control': ({ action }) => {
-      const w = BrowserWindow.getAllWindows()[0]
+      const w = mainWin ?? BrowserWindow.getAllWindows()[0]
       if (!w) return
       if (action === 'minimize') w.minimize()
       else if (action === 'maximize') setMaximized(w, true)
@@ -607,12 +679,12 @@ app.whenReady().then(async () => {
       else w.close()
     },
     'window:bounds': () => {
-      const w = BrowserWindow.getAllWindows()[0]
+      const w = mainWin ?? BrowserWindow.getAllWindows()[0]
       if (!w) return { x: 0, y: 0, width: 1280, height: 800, maximized: false }
       return { ...w.getBounds(), maximized: windowState.maximized }
     },
     'window:setBounds': ({ x, y, width, height }) => {
-      const w = BrowserWindow.getAllWindows()[0]
+      const w = mainWin ?? BrowserWindow.getAllWindows()[0]
       if (!w || windowState.maximized) return
       w.setBounds({ x, y, width: Math.max(1000, width), height: Math.max(600, height) })
     },

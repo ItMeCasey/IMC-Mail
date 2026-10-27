@@ -44,6 +44,12 @@ import {
  * Single source of truth for renderer <-> main calls.
  * Each entry is validated with zod on both sides of the bridge.
  */
+/** Things the settings window hands to the main window: dialogs that live there. */
+const settingsActionSchema = z.object({
+  kind: z.enum(['rules', 'notifications', 'report', 'addAccount', 'removeAccount']),
+  accountId: z.string().optional()
+})
+
 export const ipcContract = {
   'app:info': {
     input: z.undefined(),
@@ -459,6 +465,15 @@ export const ipcContract = {
     }),
     output: z.undefined()
   },
+  /** Opens the settings window, or brings it forward if it is already open. */
+  'settings:open': { input: z.undefined(), output: z.undefined() },
+  /** Asks the main window to open something that lives there (the settings window has no room for it). */
+  'settings:action': { input: settingsActionSchema, output: z.undefined() },
+  /** Title bar buttons of the settings window. */
+  'settings:control': {
+    input: z.object({ action: z.enum(['minimize', 'maximize', 'close']) }),
+    output: z.undefined()
+  },
   /** Public holidays on days from `from` up to `to` (epoch ms) for the chosen country. Empty while holidays are off. */
   'calendar:holidays': {
     input: z.object({ from: z.number(), to: z.number() }),
@@ -502,7 +517,9 @@ export const ipcEvents = {
   'window:state': z.object({ maximized: z.boolean() }),
   'update:changed': updateStatusSchema,
   /** A notification was clicked: open this message. */
-  'notification:open': z.object({ messageId: z.string() })
+  'notification:open': z.object({ messageId: z.string() }),
+  /** The settings window wants the main window to open a dialog. */
+  'settings:action': settingsActionSchema
 } as const
 
 export type IpcContract = typeof ipcContract
