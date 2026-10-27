@@ -30,7 +30,14 @@ const rank = (f: Folder): number => {
   const i = f.specialUse ? ORDER.indexOf(f.specialUse) : -1
   return i === -1 ? ORDER.length : i
 }
-const depthOf = (f: Folder): number => (f.delimiter ? f.path.split(f.delimiter).length - 1 : 0)
+/** How far to indent a folder: one step for each parent folder that can itself be opened (Gmail's "[Gmail]" is only a heading). */
+const depthOf = (f: Folder, openable: Set<string>): number => {
+  if (!f.delimiter) return 0
+  const parts = f.path.split(f.delimiter)
+  let depth = 0
+  for (let i = 1; i < parts.length; i++) if (openable.has(parts.slice(0, i).join(f.delimiter))) depth++
+  return depth
+}
 
 /** The mail tab: a bar with the folder and account, the messages, and a menu (the drawer) for accounts and folders. */
 export default function MailList({ accounts, selected, onSelect, onOpen, onCompose, onAddAccount }: Props) {
@@ -153,6 +160,7 @@ export default function MailList({ accounts, selected, onSelect, onOpen, onCompo
     setQuery('')
   }
   const sorted = [...folders].filter((f) => f.selectable).sort((a, b) => rank(a) - rank(b))
+  const openable = new Set(sorted.map((f) => f.path))
 
   return (
     <View style={{ flex: 1 }}>
@@ -280,7 +288,7 @@ export default function MailList({ accounts, selected, onSelect, onOpen, onCompo
           renderItem={({ item: f }) => (
             <MenuItem
               label={f.name}
-              indent={depthOf(f)}
+              indent={depthOf(f, openable)}
               selected={!!folder && f.path === folder.path}
               onPress={() => {
                 setMenu(false)
