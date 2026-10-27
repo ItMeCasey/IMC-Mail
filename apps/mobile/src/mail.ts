@@ -108,7 +108,10 @@ export async function refreshFolders(account: PhoneAccount): Promise<Folder[]> {
   return list
 }
 
-export const savedMessages = (account: PhoneAccount, folder: Folder): Promise<Summary[]> => cache.summaries(account.email, folderKey(folder))
+/** How many of a folder's newest saved messages the lists show: reading and parsing thousands of rows is what made them slow. */
+export const SHOWN_MESSAGES = 300
+
+export const savedMessages = (account: PhoneAccount, folder: Folder): Promise<Summary[]> => cache.recent(account.email, folderKey(folder), SHOWN_MESSAGES)
 
 export async function lastSynced(account: PhoneAccount, folder: Folder): Promise<number | null> {
   return (await cache.folderState(account.email, folderKey(folder)))?.syncedAt ?? null
@@ -146,7 +149,7 @@ export async function readMessage(account: PhoneAccount, folder: Folder, summary
   const message = await parseMessage(raw)
   const truncated = raw.length >= MAX_MESSAGE_BYTES
   bodies.put(account.email, key, summary.uid, { text: message.text, html: message.html, attachments: message.attachments, truncated })
-  await markRead(account, folder, summary).catch(() => undefined)
+  void markRead(account, folder, summary).catch(() => undefined)
   return { message, truncated, fromCache: false, rawBytes: raw.length }
 }
 
@@ -158,17 +161,45 @@ function downloadRaw(account: PhoneAccount, folder: Folder, summary: Summary, ma
       return c.retr(n)
     })
   }
-  return withImap(account, async (c) => {
-    await c.select(folder.path, false)
-    return c.fetchRaw(summary.uid, maxBytes)
-  })
+  // A connection of its own, so opening a message never waits behind a folder update.
+  return (async () => {
+    const c = await openImap(account)
+    try {
+      await c.select(folder.path, false)
+      return await c.fetchRaw(summary.uid, maxBytes)
+    } finally {
+      await c.logout().catch(() => undefined)
+    }
+  })()
+}
+
+/** Downloads the newest messages that are not saved yet, so opening them is instant. Quiet; errors are ignored. */
+export async function prefetchBodies(account: PhoneAccount, folder: Folder, summaries: Summary[], count = 6): Promise<void> {
+  if (isPop3(account)) return
+  const key = folderKey(folder)
+  const todo = summaries.filter((m) => !bodies.get(account.email, key, m.uid)).slice(0, count)
+  if (todo.length === 0) return
+  try {
+    const c = await openImap(account)
+    try {
+      await c.select(folder.path, false)
+      for (const m of todo) {
+        const raw = await c.fetchRaw(m.uid, MAX_MESSAGE_BYTES)
+        const message = await parseMessage(raw)
+        bodies.put(account.email, key, m.uid, { text: message.text, html: message.html, attachments: message.attachments, truncated: raw.length >= MAX_MESSAGE_BYTES })
+      }
+    } finally {
+      await c.logout().catch(() => undefined)
+    }
+  } catch {
+    // best effort
+  }
 }
 
 /** Marks a message read in the saved copy, and on the server for IMAP. */
 async function markRead(account: PhoneAccount, folder: Folder, summary: Summary): Promise<void> {
   const key = folderKey(folder)
-  const mine = (await cache.summaries(account.email, key)).find((m) => m.uid === summary.uid)
-  if (mine && !mine.flags.includes('\\Seen')) await cache.setFlags(account.email, key, new Map([[summary.uid, [...mine.flags, '\\Seen']]]))
+  if (!summary.flags.includes('\\Seen')) await cache.setFlags(account.email, key, new Map([[summary.uid, [...summary.flags, '\\Seen']]]))
   if (!isPop3(account) && !summary.flags.includes('\\Seen')) await withImap(account, async (c) => (await c.select(folder.path, false), c.setFlags([summary.uid], { add: ['\\Seen'] })))
 }
 

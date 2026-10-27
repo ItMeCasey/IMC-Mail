@@ -8,6 +8,7 @@
       "com.itmecasey.imcmail"
     ],
     "orientation": "portrait",
+    "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "plugins": [
@@ -36,6 +37,7 @@
     ],
     "android": {
       "package": "com.itmecasey.imcmail",
+      "adaptiveIcon": { "foregroundImage": "./assets/adaptive-icon.png", "backgroundColor": "#162425" },
       "permissions": [
         "android.permission.FOREGROUND_SERVICE",
         "android.permission.FOREGROUND_SERVICE_DATA_SYNC",

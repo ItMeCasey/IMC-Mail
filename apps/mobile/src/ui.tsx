@@ -1,5 +1,5 @@
-import type { ReactNode } from 'react'
-import { Appearance, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native'
+import { useEffect, useState, type ReactNode } from 'react'
+import { Appearance, Keyboard, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import type { Category } from '@imc/core'
 
@@ -78,12 +78,24 @@ export const radius = 4
 const numbers = { fontVariant: ['tabular-nums' as const] }
 
 /** A whole screen: padded for the system bars, with an optional fixed bottom bar kept above the navigation buttons. */
+/** How tall the on-screen keyboard is (0 when hidden). The window does not shrink for it, so screens pad themselves. */
+function useKeyboardHeight(): number {
+  const [h, setH] = useState(0)
+  useEffect(() => {
+    const a = Keyboard.addListener('keyboardDidShow', (e) => setH(e.endCoordinates.height))
+    const b = Keyboard.addListener('keyboardDidHide', () => setH(0))
+    return () => (a.remove(), b.remove())
+  }, [])
+  return h
+}
+
 export function Screen({ children, footer, style }: { children: ReactNode; footer?: ReactNode; style?: StyleProp<ViewStyle> }) {
   const i = useSafeAreaInsets()
+  const keyboard = useKeyboardHeight()
   return (
-    <View style={[s.screen, { paddingTop: i.top, paddingLeft: i.left, paddingRight: i.right }, style]}>
+    <View style={[s.screen, { paddingTop: i.top, paddingLeft: i.left, paddingRight: i.right, paddingBottom: keyboard }, style]}>
       <View style={s.fill}>{children}</View>
-      <View style={{ backgroundColor: footer ? colors.rail : colors.bg, paddingBottom: i.bottom }}>{footer}</View>
+      <View style={{ backgroundColor: footer ? colors.rail : colors.bg, paddingBottom: keyboard > 0 ? 0 : i.bottom }}>{footer}</View>
     </View>
   )
 }

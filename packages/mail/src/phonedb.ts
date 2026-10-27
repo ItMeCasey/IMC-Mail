@@ -101,7 +101,7 @@ const toSummary = (r: Row): Summary => ({
 })
 
 /** The saved message lists, for `syncFolder` and `syncPop3`. */
-export function messageCache(db: SqlDb): MailCache {
+export function messageCache(db: SqlDb): MailCache & { recent(account: string, folder: string, limit: number): Promise<Summary[]> } {
   return {
     async folderState(account, folder) {
       const r = db.first<{ uid_validity: number; highest_uid: number; synced_at: number }>('SELECT uid_validity, highest_uid, synced_at FROM folder_state WHERE account = ? AND folder = ?', account, folder)
@@ -119,6 +119,9 @@ export function messageCache(db: SqlDb): MailCache {
     },
     async summaries(account, folder) {
       return db.all<Row>('SELECT * FROM message WHERE account = ? AND folder = ? ORDER BY uid DESC', account, folder).map(toSummary)
+    },
+    async recent(account, folder, limit) {
+      return db.all<Row>('SELECT * FROM message WHERE account = ? AND folder = ? ORDER BY uid DESC LIMIT ?', account, folder, limit).map(toSummary)
     },
     async upsert(account, folder, list) {
       db.transaction(() => {

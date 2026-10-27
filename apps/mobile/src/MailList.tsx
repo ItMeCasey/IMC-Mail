@@ -7,7 +7,7 @@ import { notifyChanged, useChanged } from './changes'
 import { ALL_INBOXES } from './UnifiedList'
 import { AppBar, Avatar, CloseIcon, Fab, IconButton, MenuIcon, MenuItem, MenuLabel, SearchIcon, Sheet } from './chrome'
 import { items, settings } from './db'
-import { actOn, folderKey, lastSynced, refreshFolder, refreshFolders, savedFolders, savedMessages } from './mail'
+import { actOn, folderKey, lastSynced, prefetchBodies, refreshFolder, refreshFolders, savedFolders, savedMessages } from './mail'
 import { mailAllowed, notifyNewMail } from './notify'
 import { describeError, newId, when } from './screens'
 import { tell } from './report'
@@ -79,6 +79,7 @@ export default function MailList({ accounts, selected, onSelect, onOpen, onCompo
         setSyncedAt(await lastSynced(account, folder))
         if (folder.specialUse === 'inbox') void notifyNewMail(newMailToNotify(last === null ? null : before, after, { now: Date.now(), allowed: mailAllowed() }))
         void tell({ folder: account.provider, count: after.length })
+        void prefetchBodies(account, folder, after)
       } catch (e) {
         setError(before.length > 0 ? `Could not update, showing saved mail. ${describeError(e)}` : describeError(e))
       } finally {
@@ -207,6 +208,10 @@ export default function MailList({ accounts, selected, onSelect, onOpen, onCompo
       <FlatList
         data={shown}
         keyExtractor={(m) => String(m.uid)}
+        initialNumToRender={12}
+        maxToRenderPerBatch={8}
+        windowSize={7}
+        removeClippedSubviews
         contentContainerStyle={{ paddingBottom: 96 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor={colors.muted} colors={[colors.accent]} progressBackgroundColor={colors.raised} />}
         ListHeaderComponent={!refreshing && syncedAt !== null && error === null ? <Text style={st.updated}>Updated {when(syncedAt)}</Text> : undefined}
