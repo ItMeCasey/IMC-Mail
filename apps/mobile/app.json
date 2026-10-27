@@ -7,10 +7,19 @@
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
-    "plugins": ["expo-status-bar"],
+    "plugins": [
+      "expo-status-bar",
+      "react-native-quick-crypto"
+    ],
     "android": {
       "package": "com.itmecasey.imcmail",
       "allowBackup": false
+    },
+    "owner": "itmecasey",
+    "extra": {
+      "eas": {
+        "projectId": "6d530fa1-b615-4d0f-b001-055780ed8a68"
+      }
     }
   }
 }
