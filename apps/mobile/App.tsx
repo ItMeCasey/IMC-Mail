@@ -12,6 +12,7 @@ import Deals from './src/Deals'
 import Devices from './src/Devices'
 import Diagnostics from './src/Diagnostics'
 import MailList from './src/MailList'
+import UnifiedList, { ALL_INBOXES } from './src/UnifiedList'
 import MessageView from './src/MessageView'
 import { flushOutbox } from './src/mail'
 import { rescheduleReminders, setUpNotifications } from './src/notify'
@@ -100,7 +101,16 @@ function Shell() {
       <StatusBar style={isLight ? 'dark' : 'light'} />
       {screen.name === 'tab' && (
         <Screen footer={<TabBar tabs={TABS} current={screen.tab} onSelect={(id) => tab(id as Tab)} />}>
-          {screen.tab === 'mail' && (
+          {screen.tab === 'mail' && (mailSel.account === ALL_INBOXES || (mailSel.account === null && accounts.length > 1)) && (
+            <UnifiedList
+              accounts={accounts}
+              onSelect={setMailSel}
+              onOpen={(account, folder, summary) => go({ name: 'message', account, folder, summary })}
+              onCompose={(account) => go({ name: 'compose', account })}
+              onAddAccount={() => go({ name: 'addAccount' })}
+            />
+          )}
+          {screen.tab === 'mail' && !(mailSel.account === ALL_INBOXES || (mailSel.account === null && accounts.length > 1)) && (
             <MailList
               accounts={accounts}
               selected={mailSel}

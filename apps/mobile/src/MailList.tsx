@@ -4,6 +4,7 @@ import { classify } from '@imc/core'
 import { appPrefs, labelsByMessage, listLabels, logoDomain, newMailToNotify, searchSummaries, snoozedNow, type Folder, type Summary } from '@imc/mail'
 import type { PhoneAccount } from './auth'
 import { notifyChanged, useChanged } from './changes'
+import { ALL_INBOXES } from './UnifiedList'
 import { AppBar, Avatar, CloseIcon, Fab, IconButton, MenuIcon, MenuItem, MenuLabel, SearchIcon, Sheet } from './chrome'
 import { items, settings } from './db'
 import { actOn, folderKey, lastSynced, refreshFolder, refreshFolders, savedFolders, savedMessages } from './mail'
@@ -251,6 +252,15 @@ export default function MailList({ accounts, selected, onSelect, onOpen, onCompo
       )}
 
       <Sheet open={menu} onClose={() => setMenu(false)} side="left">
+        {accounts.length > 1 && (
+          <MenuItem
+            label="All inboxes"
+            onPress={() => {
+              setMenu(false)
+              onSelect({ account: ALL_INBOXES, folder: null })
+            }}
+          />
+        )}
         <MenuLabel>Accounts</MenuLabel>
         {accounts.map((a) => (
           <Pressable
