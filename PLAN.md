@@ -153,21 +153,47 @@ packages/core  # types, zod schemas, rules, categorizer, deal model, templates
 packages/mail  # provider adapters behind one interface
 ```
 
-**Mail access on mobile:** raw IMAP sockets and long-lived IDLE are unreliable on mobile (iOS suspends background apps). Use provider adapters behind a common `MailProvider` interface:
-- Gmail API and Microsoft Graph for Gmail/Outlook accounts (REST, no sockets).
-- IMAP via a native module (e.g. react-native-tcp-socket) for generic accounts, foreground sync only.
-- Local cache in SQLite (op-sqlite / expo-sqlite) with FTS5, same schema as desktop.
-- Tokens in Keychain (iOS) / Keystore (Android).
+**Decisions (2026-10-26):** React Native (Expo) rather than native Kotlin, so `packages/core` is shared as is. Android first; iOS follows from the same codebase. Generic IMAP and POP3 accounts are in from the start, not deferred. The sync and push service lives at `sync.itmecasey.com` (the droplet; the hostname makes it movable).
 
-**Push backend (required):** iOS cannot hold IMAP connections in the background, so new-mail notifications need a server.
-- Small service (Node/TypeScript) that subscribes to Gmail watch (Pub/Sub) and Graph change notifications, then sends APNs/FCM pushes containing only an account id and message id (no content). The app fetches content itself.
-- Generic IMAP accounts: server-side IDLE needs stored credentials, so these get foreground refresh and periodic background fetch only, unless the user opts in.
-- Backend stores device tokens and subscription state; no mail bodies.
+**Mail access on mobile:** raw IMAP sockets and long-lived IDLE are unreliable on iOS (it suspends background apps) and constrained on Android (Doze). Accounts go through provider adapters behind one `MailProvider` interface:
+- **Gmail API and Microsoft Graph** for Google and Microsoft accounts: REST, no sockets, tokens stay on the phone.
+- **IMAP, POP3 and SMTP** for everything else, through a small native Android module wrapping Jakarta Mail (it speaks IMAP, POP3, SMTP and IDLE and is built for Android; `imapflow` and `nodemailer` need Node sockets and will not run in React Native). Exposed to JS as an Expo module. POP3 has no server folders or flags, so those accounts get an inbox only, with read and star kept locally.
+- Generic accounts refresh in the foreground and through WorkManager every 15 minutes. An optional "instant mail" setting runs IMAP IDLE in a foreground service with a persistent notification; it is off by default.
+- Local cache in SQLite (op-sqlite or expo-sqlite) with FTS5, same table shapes as desktop where it makes sense.
+- Passwords and refresh tokens in the Android Keystore. They are never synced.
 
-**Sync between devices (settings, not mail):** end-to-end encrypted blob sync for accounts list, templates, signatures, rules, sponsorship deals, labels, and stream-safe settings. Key derived from a user passphrase; server cannot read it. Mail itself is never synced through IMC.
+**Push backend (required for Google and Microsoft push):** a small Node service at `sync.itmecasey.com`, content-free by design.
+- The phone itself calls Gmail `users.watch` (Pub/Sub topic owned by IMC) and creates Graph change subscriptions pointing at the backend, so the server never holds a mail token. Watches and subscriptions are renewed by WorkManager.
+- The backend relays each notification as an FCM data message containing only an account id and a message id; the phone fetches the content and builds the notification itself.
+- Generic IMAP and POP3 accounts get no server push (that would mean storing their passwords); they use the foreground service above or periodic fetch.
+- The backend stores device tokens and subscription state, no mail.
+
+**Sync between devices (settings, not mail).** Mail is never synced through IMC: every device reads the mail server itself, and every device signs in on its own.
+
+What syncs: labels, rules, saved searches, templates, sponsorship deals, snoozes, follow-ups, label and flag assignments on messages (keyed by account email plus the `Message-ID` header, since local row ids differ per device), your own meetings, preferences (holiday country, reminder choices, notification choices), and the account list as names only so the phone can say "sign in to add this account". What does not: mail, bodies, attachments, tokens and passwords, window and tray settings.
+
+Design:
+- **Records, not a blob.** Each item is `{id, type, hlc, deleted, payload}` where `payload` is the record encrypted on the device (AES-256-GCM, key never leaves your devices) and `hlc` is a hybrid logical clock, so device clock drift does not matter. Conflicts resolve per record, newest clock wins; deletes are tombstones. Two devices editing different labels never overwrite each other.
+- **Authenticated encryption binds the envelope.** The record id, type, clock and deleted flag are authenticated data, so the server cannot swap one record's payload for another's or replay an old version as current.
+- **The server is an append log.** A device pushes its changes and pulls everything after the last sequence number it has seen. The server learns record types, sizes and timing, never contents.
+- **Pairing without accounts or passwords.** Desktop, Settings, Devices, "Add phone" shows a QR code holding the server address, a random sync-group id and a random 256-bit data key. The phone scans it, creates a signing key (ECDSA P-256) and registers its public key. Every later request is signed. The join proof is derived from the data key with HKDF, and the server stores only its hash, so the server never learns the key. A written recovery code covers a lost phone or a reinstall.
+- **Revoking a device** deletes its public key at the server. Rotating the data key to lock a removed device out of future records is a later step.
+- **Transport:** HTTPS for push and pull, plus an FCM ping (or server-sent events while the app is open) that says "something changed, pull now". Both sides are offline-first and sync on change, on launch and on a timer.
+- **Library first.** The clock, the encryption, the merge, the wire schemas and the pairing code live in `packages/core` (flat `sync-*.ts` files, portable test enforced), so desktop, the phone and the server share one implementation and one test suite.
+
+**Android build order:**
+0. Monorepo: add `apps/mobile` (Expo dev client), `apps/sync` (server), Android OAuth clients (Google with the app's SHA-1; Microsoft with an `msauth` redirect), check that `packages/core` bundles under Hermes.
+1. Sync library in core, then the sync server and the desktop client (testable with no phone).
+2. Read-only mail for Google and Microsoft: cache, unified inbox, threads, search, bodies in a sandboxed WebView with the same sanitizer and CSP (check `sanitize-html` under Hermes).
+3. Actions and composer: archive, star, read, snooze, send, attachments, drafts.
+4. Pairing and settings sync on the phone.
+5. Push (FCM, Gmail watch, Graph subscriptions).
+6. IMAP, POP3 and SMTP module.
+7. Meeting and holiday reminders, day, week and month calendar, privacy cover (`FLAG_SECURE`, optional biometric lock).
+8. Internal beta: a sideloaded APK from GitHub Releases (sign every build with the same keystore), then Play internal testing when the $25 Play account exists.
 
 **Mobile feature scope (v1):**
-- Unified inbox, thread view, search, swipe actions, snooze.
+- Unified inbox, thread view, search, swipe actions, snooze, for Google, Microsoft, IMAP and POP3 accounts.
 - Composer (TipTap in a WebView or a native rich editor), send-as, attachments from camera/files, drafts, scheduled send.
 - Push notifications with per-account and per-category rules.
 - Sponsorship board and "needs reply" list (read/update).
@@ -182,7 +208,7 @@ packages/mail  # provider adapters behind one interface
 - **Native module:** `better-sqlite3` needs rebuild per Electron version (handled by electron-builder `install-app-deps`).
 - **HTML email sanitization** is the main security surface: allow-list, no scripts, no remote loads by default, tested against a corpus of real newsletters.
 - **Backend exists after all:** mobile push forces a small hosted service (push + encrypted settings sync). It adds hosting cost and a privacy story to maintain. Keep it content-free.
-- **Mobile skips raw IMAP where possible:** Gmail API and Graph on phones; generic IMAP is foreground-only.
+- **Mobile uses the Gmail API and Graph where it can;** generic IMAP and POP3 go through a native Jakarta Mail module and refresh in the foreground, periodically, or through an opt-in foreground service.
 - **Scope control:** ship Phases 0-3 as a usable MVP before any creator features.
 
 ## Repo layout (pnpm monorepo; Phase 0 done)
