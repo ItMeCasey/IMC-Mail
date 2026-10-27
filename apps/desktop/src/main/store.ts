@@ -890,6 +890,15 @@ export class MailStore {
     return { id, ...clean }
   }
 
+  /** Creates or updates the saved search with this id. */
+  putSavedSearch(id: string, name: string, query: string, now = Date.now()): void {
+    this.db
+      .prepare(
+        'INSERT INTO saved_search (id, name, query, created_at) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name = excluded.name, query = excluded.query'
+      )
+      .run(id, name.trim(), query.trim(), now)
+  }
+
   deleteSavedSearch(id: string): void {
     this.db.prepare('DELETE FROM saved_search WHERE id = ?').run(id)
   }
@@ -965,6 +974,15 @@ export class MailStore {
     const id = randomUUID()
     this.db.prepare('INSERT INTO label (id, name) VALUES (?, ?)').run(id, clean)
     return { id, name: clean, count: 0 }
+  }
+
+  /** Creates the label with this id, or renames it. False if another label already has the name. */
+  putLabel(id: string, name: string): boolean {
+    const clean = name.trim()
+    const clash = this.db.prepare('SELECT id FROM label WHERE name = ? AND id != ?').get(clean, id)
+    if (clash) return false
+    this.db.prepare('INSERT INTO label (id, name) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET name = excluded.name').run(id, clean)
+    return true
   }
 
   deleteLabel(id: string): void {
@@ -1383,6 +1401,77 @@ export class MailStore {
 
   deleteEvent(id: string): void {
     this.db.prepare('DELETE FROM event WHERE id = ?').run(id)
+  }
+
+  // ---- what device sync needs ------------------------------------------------------------------------
+  // Local ids differ between devices, so synced data names an account by its address and a message by
+  // its Message-ID header. These look both up in either direction.
+
+  accountIdForEmail(email: string): string | undefined {
+    return (this.db.prepare('SELECT id FROM account WHERE email = ? COLLATE NOCASE').get(email.trim()) as { id: string } | undefined)?.id
+  }
+
+  /** The local id of a message in this account with this Message-ID header, if it has been downloaded. */
+  messageIdForRfc(accountId: string, rfcId: string): string | undefined {
+    return (this.db.prepare('SELECT id FROM message WHERE account_id = ? AND message_id = ? LIMIT 1').get(accountId, rfcId) as { id: string } | undefined)?.id
+  }
+
+  rfcIdOfMessage(id: string): string | undefined {
+    return (this.db.prepare('SELECT message_id AS rfc FROM message WHERE id = ?').get(id) as { rfc: string } | undefined)?.rfc
+  }
+
+  snoozeRows(): { email: string; rfcId: string; until: number }[] {
+    return this.db
+      .prepare('SELECT a.email AS email, m.message_id AS rfcId, s.until AS until FROM snooze s JOIN message m ON m.id = s.message_id JOIN account a ON a.id = m.account_id')
+      .all() as { email: string; rfcId: string; until: number }[]
+  }
+
+  followUpRows(): { email: string; rfcId: string; due: number; fired: boolean }[] {
+    return (
+      this.db
+        .prepare('SELECT a.email AS email, m.message_id AS rfcId, f.due AS due, f.fired AS fired FROM followup f JOIN message m ON m.id = f.message_id JOIN account a ON a.id = m.account_id')
+        .all() as { email: string; rfcId: string; due: number; fired: number }[]
+    ).map((r) => ({ ...r, fired: r.fired === 1 }))
+  }
+
+  putFollowUp(messageId: string, due: number, fired: boolean): void {
+    this.db
+      .prepare('INSERT INTO followup (message_id, due, fired) VALUES (?, ?, ?) ON CONFLICT(message_id) DO UPDATE SET due = excluded.due, fired = excluded.fired')
+      .run(messageId, due, fired ? 1 : 0)
+  }
+
+  messageLabelRows(): { email: string; rfcId: string; labelId: string }[] {
+    return this.db
+      .prepare('SELECT a.email AS email, ml.rfc_id AS rfcId, ml.label_id AS labelId FROM message_label ml JOIN account a ON a.id = ml.account_id')
+      .all() as { email: string; rfcId: string; labelId: string }[]
+  }
+
+  /** Puts a label on a message by its Message-ID. False if the label does not exist here (yet). */
+  putMessageLabel(accountId: string, rfcId: string, labelId: string): boolean {
+    if (!this.db.prepare('SELECT 1 FROM label WHERE id = ?').get(labelId)) return false
+    this.db.prepare('INSERT OR IGNORE INTO message_label (account_id, rfc_id, label_id) VALUES (?, ?, ?)').run(accountId, rfcId, labelId)
+    return true
+  }
+
+  removeMessageLabel(accountId: string, rfcId: string, labelId: string): void {
+    this.db.prepare('DELETE FROM message_label WHERE account_id = ? AND rfc_id = ? AND label_id = ?').run(accountId, rfcId, labelId)
+  }
+
+  /** Creates or updates a deal under the id it already has (it came from another device). */
+  putDeal(d: Deal): void {
+    this.db
+      .prepare(
+        `INSERT INTO deal (id, account_id, message_id, brand, stage, rate, currency, deliverables, due_date, notes, created_at, updated_at, paid_at)
+         VALUES (@id, @accountId, @messageId, @brand, @stage, @rate, @currency, @deliverables, @dueDate, @notes, @createdAt, @updatedAt, @paidAt)
+         ON CONFLICT(id) DO UPDATE SET message_id = excluded.message_id, brand = excluded.brand, stage = excluded.stage, rate = excluded.rate,
+           currency = excluded.currency, deliverables = excluded.deliverables, due_date = excluded.due_date, notes = excluded.notes,
+           updated_at = excluded.updated_at, paid_at = excluded.paid_at`
+      )
+      .run({ ...d })
+  }
+
+  allEvents(): StoredEvent[] {
+    return (this.db.prepare('SELECT * FROM event ORDER BY start').all() as Parameters<MailStore['toEvent']>[0][]).map((r) => this.toEvent(r))
   }
 
   // ---- the account's own calendar (read-only copies) ----------------------------------

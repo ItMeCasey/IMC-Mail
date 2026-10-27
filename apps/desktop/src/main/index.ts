@@ -4,8 +4,9 @@ import { execFile } from 'node:child_process'
 import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
+import { hostname } from 'node:os'
 import { basename, join } from 'node:path'
-import { categorySchema, oauthProviders, type Account, type NotificationSettings } from '@imc/core'
+import { categorySchema, oauthProviders, SYNC_SERVER_URL, type Account, type NotificationSettings } from '@imc/core'
 import { Credentials } from './credentials'
 import { brandFrom } from './deals'
 import { openDb, type Db } from './db'
@@ -28,6 +29,8 @@ import { loadOAuthConfig, signIn, TokenProvider } from './oauth'
 import { CalendarSync } from './calendar-sync'
 import { defaultHolidayCountry, holidayCountries, holidaysBetween } from './holidays'
 import { ReminderService } from './reminders'
+import { DeviceSync } from './sync'
+import { sqliteSyncStorage, syncAdapters, type PrefsAccess } from './sync-local'
 import { safeStorageSecrets } from './secrets'
 import { MailStore, type AccountRow } from './store'
 import { testConnection } from './sync/engine'
@@ -99,6 +102,9 @@ function reportMaximized(m: boolean): void {
 }
 
 let mainWin: BrowserWindow | null = null
+
+/** The channels that change something that syncs between devices. */
+const SYNCED_CHANGES = /^(labels:(create|delete)|rules:(save|delete)|searches:(save|delete)|templates:(save|delete)|notifications:set|messages:(snooze|followUp|setLabels)|deals:(create|update|delete)|calendar:(respond|schedule|update|cancel))$/
 
 /** The window whose edge is being dragged: the one with focus, since the grips are in its page. */
 function targetWindow(): BrowserWindow | undefined {
@@ -503,6 +509,37 @@ app.whenReady().then(async () => {
     }
   }
   applyStreamerFeatures(streamerFeatures)
+  const savePrefs = (): void =>
+    writeFileSync(
+      settingsFile,
+      JSON.stringify({ ...readSettings(), closeToTray, streamerFeatures, showHolidays, holidayCountry, meetingReminders, reminderLeadMinutes, holidayReminders }, null, 2)
+    )
+  // Settings that follow you to your other devices (see sync-local.ts). Window behavior is not among them.
+  const prefsAccess: PrefsAccess = {
+    getApp: () => ({ streamerFeatures, showHolidays, holidayCountry, meetingReminders, reminderLeadMinutes, holidayReminders }),
+    setApp: (p) => {
+      applyStreamerFeatures(p.streamerFeatures)
+      showHolidays = p.showHolidays
+      holidayCountry = p.holidayCountry
+      meetingReminders = p.meetingReminders
+      reminderLeadMinutes = p.reminderLeadMinutes
+      holidayReminders = p.holidayReminders
+      savePrefs()
+    },
+    getNotifications: () => notificationSettings,
+    setNotifications: (s) => {
+      notificationSettings = s
+      writeFileSync(settingsFile, JSON.stringify({ ...readSettings(), notifications: notificationSettings }, null, 2))
+    }
+  }
+  const deviceSync = new DeviceSync({
+    storage: sqliteSyncStorage(db),
+    secrets,
+    adapters: syncAdapters(store, prefsAccess),
+    onApplied: () => emit('sync:applied', {})
+  })
+  deviceSync.start()
+  app.on('will-quit', () => deviceSync.stop())
   let signInAbort: AbortController | null = null
   calendarSync = new CalendarSync({
     store,
@@ -691,6 +728,26 @@ app.whenReady().then(async () => {
       const { mediaKit: _gone, ...rest } = readSettings()
       writeFileSync(settingsFile, JSON.stringify(rest, null, 2))
     },
+    'sync:status': () => deviceSync.client.status(),
+    'sync:enable': async ({ deviceName }) => {
+      if (streamSafe?.state.active) throw new Error('The pairing code is hidden while stream-safe mode is on.')
+      const p = await deviceSync.client.enable(SYNC_SERVER_URL, deviceName ?? hostname())
+      void deviceSync.client.syncNow()
+      return deviceSync.view(p)
+    },
+    'sync:pairing': async () => {
+      if (streamSafe?.state.active) throw new Error('The pairing code is hidden while stream-safe mode is on.')
+      const p = await deviceSync.client.pairing()
+      return p ? deviceSync.view(p) : null
+    },
+    'sync:join': async ({ code, deviceName }) => {
+      await deviceSync.client.join(code, deviceName ?? hostname())
+      return deviceSync.client.syncNow()
+    },
+    'sync:now': () => deviceSync.client.syncNow(),
+    'sync:devices': () => deviceSync.client.devices(),
+    'sync:removeDevice': ({ id }) => deviceSync.client.removeDevice(id).then(() => undefined),
+    'sync:disable': () => deviceSync.client.disable().then(() => undefined),
     'settings:open': () => {
       openSettingsWindow()
     },
@@ -854,10 +911,7 @@ app.whenReady().then(async () => {
       if (p.meetingReminders !== undefined) meetingReminders = p.meetingReminders
       if (p.reminderLeadMinutes !== undefined) reminderLeadMinutes = p.reminderLeadMinutes
       if (p.holidayReminders !== undefined) holidayReminders = p.holidayReminders
-      writeFileSync(
-        settingsFile,
-        JSON.stringify({ ...readSettings(), closeToTray, streamerFeatures, showHolidays, holidayCountry, meetingReminders, reminderLeadMinutes, holidayReminders }, null, 2)
-      )
+      savePrefs()
     },
     'calendar:holidays': ({ from, to }) => (showHolidays && to > from ? holidaysBetween(holidayCountry, from, Math.min(to, from + 400 * 86_400_000)) : []),
     'calendar:holidayCountries': () => holidayCountries(),
@@ -1052,6 +1106,16 @@ app.whenReady().then(async () => {
       await writeFile(target.filePath, att.content)
       return { saved: target.filePath }
     }
+  },
+  // Anything that changes what syncs is sent a few seconds later.
+  (channel) => {
+    // A new account lets items that were waiting for it come in: ask for everything again.
+    if (channel === 'accounts:add' || channel === 'accounts:addOAuth') {
+      deviceSync.client.rewind()
+      deviceSync.syncSoon()
+    }
+    // Only the changes that are synced; opening and reading mail changes nothing to send.
+    if (SYNCED_CHANGES.test(channel) || channel === 'app:setPrefs' || channel === 'settings:import') deviceSync.syncSoon()
   })
 
   // The window tells us which files the user dropped on it (see the preload); only those can be attached by path.

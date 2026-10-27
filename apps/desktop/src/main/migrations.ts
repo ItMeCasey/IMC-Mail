@@ -298,5 +298,20 @@ export const migrations: readonly string[] = [
     synced_at  INTEGER,
     error      TEXT
   );
+  `,
+  `
+  -- Syncing settings with your other devices: this device's sync settings, and what was last synced for each item.
+  CREATE TABLE sync_state (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
+  CREATE TABLE sync_item (
+    type    TEXT NOT NULL,
+    id      TEXT NOT NULL,
+    hash    TEXT NOT NULL,
+    hlc     TEXT NOT NULL,
+    deleted INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (type, id)
+  );
   `
 ]

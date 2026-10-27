@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Bell, Bug, CalendarDays, Download, HardDrive, ListFilter, Mail, Minus, Palette, Plus, ShieldCheck, SlidersHorizontal, Trash2, Upload, Users, X, type LucideIcon } from 'lucide-react'
+import { Bell, Bug, CalendarDays, Download, HardDrive, ListFilter, Mail, Minus, Palette, Plus, ShieldCheck, SlidersHorizontal, Smartphone, Trash2, Upload, Users, X, type LucideIcon } from 'lucide-react'
 import type { Account } from '@imc/core'
 import StreamSafeControl from './StreamSafeControl'
 import ThemeSwitch from './ThemeSwitch'
@@ -133,7 +133,7 @@ function CalendarSources({ hide }: { hide: boolean }) {
   )
 }
 
-type TabId = 'general' | 'appearance' | 'streamsafe' | 'mail' | 'calendar' | 'accounts' | 'data'
+type TabId = 'general' | 'appearance' | 'streamsafe' | 'mail' | 'calendar' | 'accounts' | 'devices' | 'data'
 
 const TABS: { id: TabId; label: string; icon: LucideIcon }[] = [
   { id: 'general', label: 'General', icon: SlidersHorizontal },
@@ -142,6 +142,7 @@ const TABS: { id: TabId; label: string; icon: LucideIcon }[] = [
   { id: 'mail', label: 'Mail', icon: Mail },
   { id: 'calendar', label: 'Calendar', icon: CalendarDays },
   { id: 'accounts', label: 'Accounts', icon: Users },
+  { id: 'devices', label: 'Devices', icon: Smartphone },
   { id: 'data', label: 'Updates and backup', icon: HardDrive }
 ]
 
@@ -234,6 +235,221 @@ function Reminders() {
   )
 }
 
+const syncTime = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+const errMessage = (e: unknown) => (e instanceof Error ? e.message : String(e)).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
+
+/** Keeping settings the same on this computer and your phone: turn it on, pair a device with a QR code, see and remove devices. */
+function Devices({ hidden }: { hidden: boolean }) {
+  const qc = useQueryClient()
+  const status = useQuery({ queryKey: ['sync', 'status'], queryFn: () => window.imc.invoke('sync:status'), refetchInterval: 4000 })
+  const s = status.data
+  const active = !!s?.paired && !s.revoked
+  const devices = useQuery({ queryKey: ['sync', 'devices'], queryFn: () => window.imc.invoke('sync:devices'), enabled: active, retry: false })
+  const [pairing, setPairing] = useState<{ code: string; qr: string } | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [joinCode, setJoinCode] = useState('')
+  const [confirmOff, setConfirmOff] = useState(false)
+  const [copied, setCopied] = useState(false)
+
+  // The code holds the key: never keep it on screen while stream-safe mode is on.
+  useEffect(() => {
+    if (hidden) setPairing(null)
+  }, [hidden])
+
+  const run = async (name: string, job: () => Promise<void>) => {
+    setBusy(name)
+    setError(null)
+    try {
+      await job()
+    } catch (e) {
+      setError(errMessage(e))
+    } finally {
+      setBusy(null)
+      void qc.invalidateQueries({ queryKey: ['sync'] })
+    }
+  }
+
+  const copy = async () => {
+    if (!pairing) return
+    try {
+      await navigator.clipboard.writeText(pairing.code)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      setError('Could not copy. Select the code and copy it by hand.')
+    }
+  }
+
+  return (
+    <>
+      <Section title="Sync with your other devices">
+        <p className="text-sm text-ink-2">
+          Keeps your labels, rules, saved searches, reply templates, sponsorship deals, snoozes, follow-up reminders, meetings and these settings the same on this computer and your phone. Your mail is never copied: each device reads it
+          from your mail provider itself. Settings are encrypted here before they leave, so the sync server cannot read them.
+        </p>
+
+        {!s?.paired && (
+          <>
+            <button className={row} disabled={busy !== null || hidden} onClick={() => void run('enable', async () => setPairing(await window.imc.invoke('sync:enable', {})))}>
+              <Smartphone size={16} strokeWidth={1.75} aria-hidden />
+              {busy === 'enable' ? 'Turning on…' : 'Turn on sync and add a phone'}
+            </button>
+            {hidden && <p className="text-xs text-ink-3">Hidden while stream-safe mode is on, because the pairing code holds your key.</p>}
+            <div className="space-y-1.5 pt-2">
+              <label className="block text-sm text-ink-2" htmlFor="join-code">
+                Already syncing on another device? Paste its pairing code
+              </label>
+              <div className="flex gap-2">
+                <input
+                  id="join-code"
+                  value={joinCode}
+                  onChange={(e) => setJoinCode(e.target.value)}
+                  placeholder="imcsync1:…"
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="h-9 min-w-0 flex-1 rounded-md border border-line-strong bg-sheet px-2.5 text-ink"
+                />
+                <button
+                  className="h-9 shrink-0 rounded-md border border-line-strong px-4 text-ink hover:bg-hover disabled:opacity-50"
+                  disabled={busy !== null || !joinCode.trim()}
+                  onClick={() =>
+                    void run('join', async () => {
+                      const r = await window.imc.invoke('sync:join', { code: joinCode })
+                      if (r.paired) setJoinCode('')
+                    })
+                  }
+                >
+                  {busy === 'join' ? 'Joining…' : 'Join'}
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+
+        {s?.paired && (
+          <div className="space-y-1 text-sm">
+            <p className="text-ink">
+              This computer: <span className="font-medium">{s.deviceName}</span>
+            </p>
+            <p role="status" className={s.error || s.revoked ? 'text-alert' : 'text-ink-3'}>
+              {s.revoked
+                ? 'Another device removed this one from sync. Turn sync off here, then on again to rejoin.'
+                : (s.error ?? (s.syncing ? 'Syncing…' : s.lastSyncAt ? `Last synced ${syncTime.format(s.lastSyncAt)}` : 'Waiting for the first sync'))}
+            </p>
+            {!s.revoked && (
+              <div className="flex flex-wrap gap-2 pt-1">
+                <button
+                  className="h-8 rounded-md border border-line-strong px-3 text-ink hover:bg-hover disabled:opacity-50"
+                  disabled={busy !== null || s.syncing}
+                  onClick={() => void run('now', async () => void (await window.imc.invoke('sync:now')))}
+                >
+                  {busy === 'now' ? 'Syncing…' : 'Sync now'}
+                </button>
+                <button
+                  className="h-8 rounded-md border border-line-strong px-3 text-ink hover:bg-hover disabled:opacity-50"
+                  disabled={busy !== null || hidden}
+                  onClick={() => void run('pair', async () => setPairing(await window.imc.invoke('sync:pairing')))}
+                >
+                  Add a device
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {error && (
+          <p role="alert" className="text-sm text-alert">
+            {error}
+          </p>
+        )}
+
+        {pairing && !hidden && (
+          <div className="space-y-3 rounded-md border border-line-strong p-4">
+            <p className="text-sm text-ink">On your phone, open IMC-Mail, then Settings, Devices, and scan this code.</p>
+            <img src={pairing.qr} alt="QR code that pairs a device" width={220} height={220} className="mx-auto rounded-md bg-white" />
+            <label className="block text-xs text-ink-3">
+              Or type this code on the other device
+              <textarea readOnly value={pairing.code} rows={3} className="mt-1 block w-full resize-none rounded-md border border-line-strong bg-sheet p-2 font-mono text-xs break-all text-ink" onFocus={(e) => e.currentTarget.select()} />
+            </label>
+            <div className="flex items-center gap-2">
+              <button className="h-8 rounded-md border border-line-strong px-3 text-ink hover:bg-hover" onClick={() => void copy()}>
+                {copied ? 'Copied' : 'Copy code'}
+              </button>
+              <button className="h-8 rounded-md px-3 text-ink-2 hover:bg-hover" onClick={() => setPairing(null)}>
+                Hide
+              </button>
+            </div>
+            <p className="text-xs text-ink-3">Anyone with this code can read and change your synced settings. It is not stored on the server. Hide it when you are done.</p>
+          </div>
+        )}
+      </Section>
+
+      {s?.paired && !s.revoked && (
+        <Section title="Devices">
+          {devices.isPending && <p className="text-sm text-ink-3">Loading…</p>}
+          {devices.isError && <p className="text-sm text-ink-3">The list could not be loaded. {errMessage(devices.error)}</p>}
+          <ul className="space-y-2">
+            {(devices.data ?? []).map((d) => (
+              <li key={d.id} className="flex items-center gap-2">
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm text-ink">
+                    {d.name || 'Unnamed device'}
+                    {d.current && <span className="ml-2 rounded-sm border border-line-strong px-1.5 text-xs leading-4 text-ink-2">This computer</span>}
+                  </span>
+                  <span className="block text-xs text-ink-3">Last seen {syncTime.format(d.lastSeen)}</span>
+                </span>
+                {!d.current && (
+                  <button
+                    className="grid size-8 shrink-0 place-items-center rounded-md text-ink-2 hover:bg-hover hover:text-alert disabled:opacity-50"
+                    aria-label={`Remove ${d.name || 'this device'}`}
+                    title="Remove this device from sync"
+                    disabled={busy !== null}
+                    onClick={() => void run('remove', () => window.imc.invoke('sync:removeDevice', { id: d.id }))}
+                  >
+                    <Trash2 size={15} strokeWidth={1.75} aria-hidden />
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+          <p className="text-xs text-ink-3">A removed device stops syncing at once. To lock it out for good, also change what it could read: it keeps the settings it already has.</p>
+        </Section>
+      )}
+
+      {s?.paired && (
+        <Section title="Turn off">
+          <p className="text-sm text-ink-3">Stops syncing on this computer and forgets its keys. The settings already here stay, and your other devices keep syncing with each other.</p>
+          {confirmOff ? (
+            <div className="flex gap-2">
+              <button
+                className="h-9 rounded-md border border-alert px-4 text-alert hover:bg-hover disabled:opacity-50"
+                disabled={busy !== null}
+                onClick={() =>
+                  void run('off', async () => {
+                    await window.imc.invoke('sync:disable')
+                    setPairing(null)
+                    setConfirmOff(false)
+                  })
+                }
+              >
+                Yes, turn sync off
+              </button>
+              <button className="h-9 rounded-md border border-line-strong px-4 text-ink hover:bg-hover" onClick={() => setConfirmOff(false)}>
+                Keep syncing
+              </button>
+            </div>
+          ) : (
+            <button className={row} onClick={() => setConfirmOff(true)}>
+              Turn off sync on this computer
+            </button>
+          )}
+        </Section>
+      )}
+    </>
+  )
+}
+
 /** Everything that is a setting rather than mail, in one window of its own. */
 export default function SettingsWindow() {
   const streamSafe = useStreamSafe()
@@ -277,6 +493,7 @@ export default function SettingsWindow() {
     window.addEventListener('focus', again)
     return () => window.removeEventListener('focus', again)
   }, [qcAll])
+  useEffect(() => window.imc.on('sync:applied', () => void qc.invalidateQueries()), [qc])
   const control = (action: 'minimize' | 'close') => void window.imc.invoke('settings:control', { action })
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -439,6 +656,8 @@ export default function SettingsWindow() {
               </button>
             </Section>
           )}
+
+          {current === 'devices' && <Devices hidden={streamSafe.active} />}
 
           {current === 'data' && (
             <>

@@ -44,6 +44,19 @@ import {
  * Single source of truth for renderer <-> main calls.
  * Each entry is validated with zod on both sides of the bridge.
  */
+export const syncStatusSchema = z.object({
+  paired: z.boolean(),
+  server: z.string(),
+  deviceName: z.string(),
+  lastSyncAt: z.number().nullable(),
+  error: z.string().nullable(),
+  syncing: z.boolean(),
+  revoked: z.boolean()
+})
+
+/** What to show to pair a device: the code to type or paste, and the same code as a QR image. */
+const pairingViewSchema = z.object({ code: z.string(), qr: z.string() })
+
 /** Things the settings window hands to the main window: dialogs that live there. */
 const settingsActionSchema = z.object({
   kind: z.enum(['rules', 'notifications', 'report', 'addAccount', 'removeAccount']),
@@ -472,6 +485,22 @@ export const ipcContract = {
     }),
     output: z.undefined()
   },
+  /** Whether this computer syncs its settings with your other devices, and how the last round went. */
+  'sync:status': { input: z.undefined(), output: syncStatusSchema },
+  /** Turns sync on from this computer and returns the pairing code (as text and as a QR image) for the phone to scan. */
+  'sync:enable': { input: z.object({ deviceName: z.string().trim().min(1).max(60).optional() }), output: pairingViewSchema },
+  /** The pairing code again, to add another device. Null when this computer is not syncing. */
+  'sync:pairing': { input: z.undefined(), output: pairingViewSchema.nullable() },
+  /** Joins a group another device made, from its pairing code. */
+  'sync:join': { input: z.object({ code: z.string().max(4000), deviceName: z.string().trim().min(1).max(60).optional() }), output: syncStatusSchema },
+  'sync:now': { input: z.undefined(), output: syncStatusSchema },
+  'sync:devices': {
+    input: z.undefined(),
+    output: z.array(z.object({ id: z.string(), name: z.string(), createdAt: z.number(), lastSeen: z.number(), current: z.boolean() }))
+  },
+  'sync:removeDevice': { input: z.object({ id: z.string() }), output: z.undefined() },
+  /** Stops syncing on this computer. Settings already here stay. */
+  'sync:disable': { input: z.undefined(), output: z.undefined() },
   /** Opens the settings window, or brings it forward if it is already open. */
   'settings:open': { input: z.undefined(), output: z.undefined() },
   /** Asks the main window to open something that lives there (the settings window has no room for it). */
@@ -525,6 +554,8 @@ export const ipcEvents = {
   'update:changed': updateStatusSchema,
   /** A notification was clicked: open this message. */
   'notification:open': z.object({ messageId: z.string() }),
+  /** Settings from another device arrived and changed something here. */
+  'sync:applied': z.object({}),
   /** A reminder was clicked: open the calendar. */
   'notification:calendar': z.object({}),
   /** The settings window wants the main window to open a dialog. */

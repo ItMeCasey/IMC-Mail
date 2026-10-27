@@ -29,6 +29,8 @@ export function useSyncInvalidation(): void {
   const qc = useQueryClient()
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined
+    // Settings from another device arrived: look at everything again.
+    const offApplied = window.imc.on('sync:applied', () => void qc.invalidateQueries())
     const offOutbox = window.imc.on('outbox:changed', () => void qc.invalidateQueries({ queryKey: ['outbox'] }))
     const off = window.imc.on('sync:changed', () => {
       clearTimeout(timer)
@@ -38,6 +40,7 @@ export function useSyncInvalidation(): void {
       clearTimeout(timer)
       off()
       offOutbox()
+      offApplied()
     }
   }, [qc])
 }

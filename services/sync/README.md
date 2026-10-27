@@ -4,7 +4,7 @@ Relays encrypted settings records between one person's devices (desktop and phon
 `https://sync.itmecasey.com`. It stores ciphertext only: the key that opens a record exists on
 your devices and never reaches this server. Mail is never sent here.
 
-- One file once built, no packages to install on the droplet. Needs **Node 22.13 or newer** (it uses the built-in `node:sqlite`).
+- One file once built, no packages to install on the droplet. Needs **Node 22.13 or newer** (it uses the built-in `node:sqlite`). The droplet has no system Node; the service runs on a copy of the Node binary kept in `/opt/imc-sync/node`.
 - Storage: one SQLite file.
 - No accounts or passwords. A device joins a group with a proof derived from a key shown as a QR code on desktop, and then signs every request (ECDSA P-256).
 - Limits: 5 new groups per address per hour, 20 join attempts per address per hour, 120 requests a minute per device, 10 devices and 20,000 records per group, 5,000 groups, 4 MB per request.
@@ -21,8 +21,10 @@ This makes `services/sync/dist/server.mjs`.
 ## 2. Put it on the droplet
 
 ```bash
-node --version                     # must be 22.13 or newer
+# The droplet has no system Node. Reuse the copy the report relay carries (22.13 or newer is needed):
+/opt/imc-report-relay/node/bin/node --version
 sudo mkdir -p /opt/imc-sync /var/lib/imc-sync
+sudo cp /opt/imc-report-relay/node/bin/node /opt/imc-sync/node
 sudo useradd --system --no-create-home --shell /usr/sbin/nologin imcsync
 sudo chown imcsync:imcsync /var/lib/imc-sync
 ```
@@ -40,10 +42,12 @@ After=network.target
 
 [Service]
 User=imcsync
-ExecStart=/usr/bin/node /opt/imc-sync/server.mjs
+ExecStart=/opt/imc-sync/node /opt/imc-sync/server.mjs
 Environment=PORT=8788
 Environment=DB_PATH=/var/lib/imc-sync/sync.sqlite
 Environment=TRUST_PROXY=1
+Environment=NODE_NO_WARNINGS=1
+WorkingDirectory=/var/lib/imc-sync
 Restart=on-failure
 NoNewPrivileges=true
 ProtectSystem=strict
@@ -85,6 +89,10 @@ sudo nginx -t && sudo systemctl reload nginx
 sudo certbot --nginx -d sync.itmecasey.com
 curl https://sync.itmecasey.com/healthz   # {"ok":true}
 ```
+
+## Where it runs
+
+Deployed on the droplet (reached with `ssh itmecasey-droplet`) as the service `imc-sync`, user `imcsync`, port 8788 behind nginx, with its own certificate for `sync.itmecasey.com`. The `itmecasey.com` site and the report relay (port 8787) are separate and untouched.
 
 ## Updating
 

@@ -18,13 +18,15 @@ type Handlers = {
 }
 
 /** Registers every channel in the contract; input and output are zod-validated. */
-export function registerIpc(handlers: Handlers): void {
+export function registerIpc(handlers: Handlers, afterCall?: (channel: IpcChannel) => void): void {
   for (const channel of Object.keys(ipcContract) as IpcChannel[]) {
     const schema = ipcContract[channel]
     const handler = handlers[channel] as (input: unknown) => unknown
     ipcMain.handle(channel, async (_event, raw) => {
       const input = schema.input.parse(raw)
-      return schema.output.parse(await handler(input))
+      const out = schema.output.parse(await handler(input))
+      afterCall?.(channel)
+      return out
     })
   }
 }

@@ -3,6 +3,9 @@ import { fromB64, isDataKey, toB64 } from './sync-crypto'
 import { syncRecordSchema } from './sync-merge'
 import { safeWebUrl } from './url'
 
+/** Where IMC-Mail's sync server runs. Pairing codes carry the address, so another server can be used. */
+export const SYNC_SERVER_URL = 'https://sync.itmecasey.com'
+
 /** Most records one push or one pull carries. A device with more catches up in several rounds. */
 export const MAX_BATCH = 500
 
