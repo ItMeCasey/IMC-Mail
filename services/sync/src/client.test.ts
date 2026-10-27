@@ -400,3 +400,102 @@ describe('removing devices', () => {
     expect(phone.client.status()).toMatchObject({ paired: true, revoked: false, deviceName: 'Phone again' })
   })
 })
+
+describe('what the server can see', () => {
+  const ids = async (pairing: { groupId: string }) => deps.store.pull(pairing.groupId, 0, 500).records.map((r) => r.id)
+
+  it('names records by a hash, so an account address and Message-ID never reach the server', async () => {
+    const { desktop, phone, pairing } = await pair()
+    const real = 'me@example.com\u001f<abc123@mail.example.com>'
+    desktop.rules.rows.set(real, { name: 'Snoozed' })
+    await desktop.client.syncNow()
+    const seen = await ids(pairing)
+    expect(seen).toHaveLength(1)
+    expect(seen[0]).toMatch(/^[A-Za-z0-9_-]{43}$/)
+    expect(JSON.stringify(deps.store.pull(pairing.groupId, 0, 500).records)).not.toContain('me@example.com')
+    // The other device still gets the real id.
+    await phone.client.syncNow()
+    expect(phone.rules.rows.get(real)).toEqual({ name: 'Snoozed' })
+  })
+
+  it('carries a deletion of such a record across', async () => {
+    const { desktop, phone } = await pair()
+    const real = 'me@example.com\u001f<abc123@mail.example.com>'
+    desktop.rules.rows.set(real, { name: 'x' })
+    await desktop.client.syncNow()
+    await phone.client.syncNow()
+    tick()
+    desktop.rules.rows.delete(real)
+    await desktop.client.syncNow()
+    await phone.client.syncNow()
+    expect(phone.rules.rows.size).toBe(0)
+  })
+
+  it('keeps working with a group made before records were named by hash', async () => {
+    const desktop = makeDevice('Desktop')
+    const phone = makeDevice('Phone')
+    const p = await desktop.client.enable(SERVER, 'Desktop')
+    // Make it an older group on both devices: the pairing code carries no scheme, and the desktop uses real ids.
+    desktop.storage.kv.set('ids', 'plain')
+    tick()
+    await phone.client.join(desktop.client.pairingCode({ server: p.server, groupId: p.groupId, key: p.key }), 'Phone')
+    expect(phone.storage.kv.get('ids')).toBe('plain')
+    desktop.rules.rows.set('me@example.com\u001fid', { name: 'Old style' })
+    await desktop.client.syncNow()
+    expect(await ids(p)).toEqual(['me@example.com\u001fid'])
+    await phone.client.syncNow()
+    expect(phone.rules.rows.get('me@example.com\u001fid')).toEqual({ name: 'Old style' })
+  })
+})
+
+describe('replacing the key', () => {
+  it('ends the old group, starts a new one with a new key, and sends everything again', async () => {
+    const { desktop, phone, pairing } = await pair()
+    desktop.labels.rows.set('l1', { name: 'Sponsors' })
+    await desktop.client.syncNow()
+    const fresh = await desktop.client.rotate()
+    expect(fresh.key).not.toBe(pairing.key)
+    expect(fresh.groupId).not.toBe(pairing.groupId)
+    expect(deps.store.groupCount()).toBe(1)
+    expect(deps.store.pull(pairing.groupId, 0, 500).records).toEqual([])
+    expect(desktop.client.status().paired).toBe(true)
+
+    tick()
+    await desktop.client.syncNow()
+    expect(deps.store.pull(fresh.groupId, 0, 500).records).toHaveLength(1)
+
+    // The phone was in the old group, so it is told it was removed, and rejoins with the new code.
+    await phone.client.syncNow()
+    expect(phone.client.status().revoked).toBe(true)
+    await phone.client.disable()
+    await phone.client.join(desktop.client.pairingCode(fresh), 'Phone')
+    await phone.client.syncNow()
+    expect(phone.labels.rows.get('l1')).toEqual({ name: 'Sponsors' })
+  })
+
+  it('leaves the old group working when the new one cannot be made', async () => {
+    const { desktop, pairing } = await pair()
+    offline = true
+    await expect(desktop.client.rotate()).rejects.toThrow("Can't reach")
+    offline = false
+    expect(desktop.client.status().paired).toBe(true)
+    expect(await desktop.client.pairing()).toEqual(pairing)
+    expect(deps.store.groupCount()).toBe(1)
+    await expect(desktop.client.syncNow()).resolves.toMatchObject({ error: null })
+  })
+
+  it('moves a group made before hashed names onto them', async () => {
+    const desktop = makeDevice('Desktop')
+    const p = await desktop.client.enable(SERVER, 'Desktop')
+    desktop.storage.kv.set('ids', 'plain')
+    desktop.rules.rows.set('me@example.com\u001fid', { name: 'x' })
+    await desktop.client.syncNow()
+    const fresh = await desktop.client.rotate()
+    expect(fresh.ids).toBe('opaque')
+    await desktop.client.syncNow()
+    const after = deps.store.pull(fresh.groupId, 0, 500).records
+    expect(after).toHaveLength(1)
+    expect(after[0]!.id).not.toContain('me@example.com')
+    expect(p.groupId).not.toBe(fresh.groupId)
+  })
+})

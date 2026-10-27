@@ -129,6 +129,11 @@ export class SyncStore {
     return true
   }
 
+  /** Removes a group with its devices and records. */
+  deleteGroup(groupId: string): void {
+    this.db.prepare('DELETE FROM sync_group WHERE id = ?').run(groupId)
+  }
+
   recordCount(groupId: string): number {
     return (this.db.prepare('SELECT COUNT(*) AS n FROM record WHERE group_id = ?').get(groupId) as { n: number }).n
   }

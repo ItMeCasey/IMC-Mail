@@ -107,6 +107,7 @@ To move to another host: stop the service, copy that folder, start it there, and
 
 ## Not handled yet
 
-- Deleted records (tombstones) are kept forever, so a device that was offline for months still learns about deletions. They are small; a clean-up job can come later.
+- Deletion records older than 180 days are dropped (a device that stays off longer could bring a deleted item back).
+- Key replacement is by starting a new group: `DELETE /v1/group` ends the old one (any member may call it), and the other devices join the new one with its pairing code.
 - A removed device loses access at once, but it still holds the data key. Rotating the key to lock it out of future records is a later step.
 - Changes are found by asking (every few minutes and on change). A push ping through FCM comes with the Android app.

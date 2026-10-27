@@ -7,6 +7,7 @@ import {
   newDeviceId,
   newDeviceKeys,
   newGroupId,
+  opaqueId,
   openPayload,
   sealPayload,
   signText
@@ -164,8 +165,8 @@ export class SyncClient {
       joinHash: await joinHash(await joinToken(key)),
       device: { id: deviceId, publicKey: keys.publicKey, name: deviceName }
     })
-    await this.remember({ server: url, groupId, deviceId, deviceName }, key, keys.privateKey)
-    return { server: url, groupId, key }
+    await this.remember({ server: url, groupId, deviceId, deviceName, ids: 'opaque' }, key, keys.privateKey)
+    return { server: url, groupId, key, ids: 'opaque' }
   }
 
   /** Joins a group another device made, from its pairing code. */
@@ -180,10 +181,10 @@ export class SyncClient {
       joinToken: await joinToken(p.key),
       device: { id: deviceId, publicKey: keys.publicKey, name: deviceName }
     })
-    await this.remember({ server: p.server, groupId: p.groupId, deviceId, deviceName }, p.key, keys.privateKey)
+    await this.remember({ server: p.server, groupId: p.groupId, deviceId, deviceName, ids: p.ids ?? 'plain' }, p.key, keys.privateKey)
   }
 
-  private async remember(c: { server: string; groupId: string; deviceId: string; deviceName: string }, key: string, privateKey: string): Promise<void> {
+  private async remember(c: { server: string; groupId: string; deviceId: string; deviceName: string; ids: 'plain' | 'opaque' }, key: string, privateKey: string): Promise<void> {
     await this.d.secrets.set(KEY_SECRET, key)
     await this.d.secrets.set(PRIVATE_SECRET, privateKey)
     const s = this.d.storage
@@ -198,7 +199,7 @@ export class SyncClient {
     const key = await this.d.secrets.get(KEY_SECRET)
     const groupId = s.get('groupId')
     const server = s.get('server')
-    return key && groupId && server ? { server, groupId, key } : null
+    return key && groupId && server ? { server, groupId, key, ids: s.get('ids') === 'opaque' ? 'opaque' : 'plain' } : null
   }
 
   pairingCode(p: Pairing): string {
@@ -216,6 +217,38 @@ export class SyncClient {
     await this.d.secrets.delete(KEY_SECRET)
     await this.d.secrets.delete(PRIVATE_SECRET)
     this.d.storage.clear()
+  }
+
+  /**
+   * Replaces the key: makes a new group with a fresh key, ends the old group on the server (so a device that was removed
+   * can read nothing more, and the old copies are gone), and starts syncing into the new one. Everything on this device is
+   * sent again under the new key. Other devices lose access until they join with the new code. It also moves an older group
+   * onto opaque record names. Returns the new pairing code.
+   */
+  async rotate(): Promise<Pairing> {
+    const s = this.d.storage
+    const oldGroup = s.get('groupId')
+    const server = s.get('server')
+    const deviceName = s.get('deviceName') ?? ''
+    if (!oldGroup || !server || !s.get('deviceId')) throw new SyncError('Sync is not turned on here.')
+    const key = newDataKey()
+    const groupId = newGroupId()
+    const deviceId = newDeviceId()
+    const keys = await newDeviceKeys()
+    // The new group comes first, so a failure leaves the old one working.
+    await this.send(server, 'POST', '/v1/groups', {
+      groupId,
+      joinHash: await joinHash(await joinToken(key)),
+      device: { id: deviceId, publicKey: keys.publicKey, name: deviceName }
+    })
+    try {
+      await this.signed('DELETE', '/v1/group')
+    } catch (e) {
+      // 401 means the old group is already gone (another device replaced the key first): nothing left to end.
+      if (!(e instanceof SyncError && s.get('revoked') === '1')) throw e
+    }
+    await this.remember({ server, groupId, deviceId, deviceName, ids: 'opaque' }, key, keys.privateKey)
+    return { server, groupId, key, ids: 'opaque' }
   }
 
   // ---- devices ---------------------------------------------------------------------------------------
@@ -308,8 +341,8 @@ export class SyncClient {
         const item = s.item(adapter.type, id)
         if (item && !item.deleted && item.hash === hash) continue
         last = tickHlc(last, this.now(), deviceId)
-        const env = { id, type: adapter.type, hlc: last, deleted: false }
-        const payload = await sealPayload(key, env, data)
+        const env = { id: await this.wireId(key, adapter.type, id), type: adapter.type, hlc: last, deleted: false }
+        const payload = await sealPayload(key, env, this.contents(id, data))
         if (payload.length > MAX_PAYLOAD_CHARS) continue
         const record = { ...env, payload }
         out.set(recordKey(record), { record, item: { type: adapter.type, id, hash, hlc: last, deleted: false } })
@@ -317,8 +350,8 @@ export class SyncClient {
       for (const item of s.items(adapter.type)) {
         if (item.deleted || seen.has(item.id)) continue
         last = tickHlc(last, this.now(), deviceId)
-        const env = { id: item.id, type: adapter.type, hlc: last, deleted: true }
-        const record = { ...env, payload: await sealPayload(key, env, null) }
+        const env = { id: await this.wireId(key, adapter.type, item.id), type: adapter.type, hlc: last, deleted: true }
+        const record = { ...env, payload: await sealPayload(key, env, this.contents(item.id, null)) }
         out.set(recordKey(record), { record, item: { type: adapter.type, id: item.id, hash: '', hlc: last, deleted: true } })
       }
     }
@@ -350,12 +383,17 @@ export class SyncClient {
     const order = (t: SyncType) => syncTypes.indexOf(t)
     const touched = new Map<SyncType, string[]>()
     let applied = false
-    for (const r of [...records].sort((a, b) => order(a.type) - order(b.type))) {
-      const adapter = this.byType.get(r.type)
+    const stamps = new Map<string, string>()
+    for (const wire of [...records].sort((a, b) => order(a.type) - order(b.type))) {
+      const adapter = this.byType.get(wire.type)
+      const opened = adapter ? await this.open(key, wire) : null
+      if (!adapter || !opened) continue
+      // From here on the record is known by its real id; `wire` is what it was called on the server.
+      const r = { ...wire, id: opened.id }
       const item = s.item(r.type, r.id)
-      const mine = pending.get(recordKey(r))
-      // Not a kind this version syncs, or no newer than what is already here (this includes our own records coming back).
-      if (!adapter || (item && compareHlc(r.hlc, item.hlc) <= 0)) continue
+      const mine = pending.get(recordKey(wire))
+      // No newer than what is already here (this includes our own records coming back).
+      if (item && compareHlc(r.hlc, item.hlc) <= 0) continue
       // A change made here that has not been sent yet and is newer than this one stands.
       if (mine && compareHlc(r.hlc, mine.record.hlc) <= 0) continue
       try {
@@ -371,7 +409,7 @@ export class SyncClient {
       }
       let data: unknown
       try {
-        data = adapter.parse(await openPayload(key, r, r.payload))
+        data = adapter.parse(opened.data)
       } catch {
         continue
       }
@@ -380,6 +418,7 @@ export class SyncClient {
       if (stored === true) {
         applied = true
         touched.set(r.type, [...(touched.get(r.type) ?? []), r.id])
+        stamps.set(recordKey(r), r.hlc)
       } else if (stored === 'later') this.deferred++
       // Nothing is recorded for an item that could not be stored: it is not sent back as a change or a deletion,
       // and a newer version of it, or a later round, can still bring it in.
@@ -389,13 +428,44 @@ export class SyncClient {
     for (const [type, ids] of touched) {
       const now = new Map(this.byType.get(type)!.list().map((e) => [e.id, e.data]))
       for (const id of ids) {
-        const stamp = records.find((r) => r.type === type && r.id === id)!.hlc
+        const stamp = stamps.get(recordKey({ type, id }))!
         s.putItem({ type, id, hash: await hashBody(stableStringify(now.get(id) ?? null)), hlc: stamp, deleted: false })
       }
     }
   }
 
   // ---- talking to the server -------------------------------------------------------------------------
+
+  /** Whether this group names records by keyed hash (new groups) or by their real id (groups made before that). */
+  private opaque(): boolean {
+    return this.d.storage.get('ids') === 'opaque'
+  }
+
+  /** The name a record goes by on the server. */
+  private wireId(key: string, type: SyncType, id: string): Promise<string> {
+    return this.opaque() ? opaqueId(key, type, id) : Promise.resolve(id)
+  }
+
+  /** What gets sealed: the data, with the real id beside it when the server is not to see it. */
+  private contents(id: string, data: unknown): unknown {
+    return this.opaque() ? { i: id, d: data } : data
+  }
+
+  /**
+   * Opens a record that arrived and works out its real id and contents. Null when it cannot be used: damaged, sealed with
+   * another key, or not named the way its real id says it should be.
+   */
+  private async open(key: string, r: SyncRecord): Promise<{ id: string; data: unknown } | null> {
+    try {
+      if (!this.opaque()) return { id: r.id, data: r.deleted ? null : await openPayload(key, r, r.payload) }
+      const inner = (await openPayload(key, r, r.payload)) as { i?: unknown; d?: unknown } | null
+      if (!inner || typeof inner.i !== 'string' || inner.i === '' || inner.i.length > 200) return null
+      if ((await opaqueId(key, r.type, inner.i)) !== r.id) return null
+      return { id: inner.i, data: r.deleted ? null : inner.d }
+    } catch {
+      return null
+    }
+  }
 
   private async signed(method: string, path: string, body?: unknown): Promise<unknown> {
     const s = this.d.storage

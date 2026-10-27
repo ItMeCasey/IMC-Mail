@@ -744,6 +744,12 @@ app.whenReady().then(async () => {
       const p = await deviceSync.client.pairing()
       return p ? deviceSync.view(p) : null
     },
+    'sync:rotate': async () => {
+      if (streamSafe?.state.active) throw new Error('The pairing code is hidden while stream-safe mode is on.')
+      const p = await deviceSync.client.rotate()
+      void deviceSync.client.syncNow()
+      return deviceSync.view(p)
+    },
     'sync:join': async ({ code, deviceName }) => {
       await deviceSync.client.join(code, deviceName ?? hostname())
       return deviceSync.client.syncNow()

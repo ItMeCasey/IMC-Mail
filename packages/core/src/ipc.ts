@@ -495,6 +495,11 @@ export const ipcContract = {
   'sync:pairing': { input: z.undefined(), output: pairingViewSchema.nullable() },
   /** Joins a group another device made, from its pairing code. */
   'sync:join': { input: z.object({ code: z.string().max(4000), deviceName: z.string().trim().min(1).max(60).optional() }), output: syncStatusSchema },
+  /**
+   * Replaces the key: ends the sync group on the server and starts a new one with a fresh key, sending everything again.
+   * Other devices stop syncing until they join with the returned code. Also moves an older group to hashed record names.
+   */
+  'sync:rotate': { input: z.undefined(), output: pairingViewSchema },
   'sync:now': { input: z.undefined(), output: syncStatusSchema },
   'sync:devices': {
     input: z.undefined(),

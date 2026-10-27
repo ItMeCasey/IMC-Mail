@@ -132,7 +132,7 @@ export async function handle(req: Req, deps: Deps): Promise<Res> {
     return { status: 200, json: { ok: true } }
   }
 
-  const known = path === '/v1/sync' || path === '/v1/devices' || /^\/v1\/devices\/[A-Za-z0-9_]{4,32}$/.test(path)
+  const known = path === '/v1/sync' || path === '/v1/group' || path === '/v1/devices' || /^\/v1\/devices\/[A-Za-z0-9_]{4,32}$/.test(path)
   if (!known) return fail(404, 'Not found')
 
   const who = await authenticate(req, deps)
@@ -150,6 +150,13 @@ export async function handle(req: Req, deps: Deps): Promise<Res> {
     const page = deps.store.pull(who.groupId, since, limit)
     const out: SyncResponse = { ...page, refused: records.length - sane.length + pushed.refused }
     return { status: 200, json: out }
+  }
+
+  // DELETE /v1/group ends the whole group: its devices and everything stored for them. Used when the key is replaced.
+  if (path === '/v1/group') {
+    if (method !== 'DELETE') return fail(405, 'Method not allowed')
+    deps.store.deleteGroup(who.groupId)
+    return { status: 200, json: { ok: true } }
   }
 
   if (path === '/v1/devices') {

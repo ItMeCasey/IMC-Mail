@@ -66,6 +66,18 @@ export async function joinHash(token: string): Promise<string> {
   return toB64(await sha256(token))
 }
 
+/**
+ * The name a record has on the server in place of its real id: a keyed hash of the kind and the id. The server and
+ * anyone watching it see only random-looking text, so account addresses and Message-IDs stay on the devices. The real
+ * id travels inside the sealed contents, and a receiver checks that it hashes to the name the record arrived under.
+ */
+export async function opaqueId(dataKey: string, type: string, id: string): Promise<string> {
+  const raw = await derive(dataKey, 'imc-sync id v1', 32)
+  const key = await subtle().importKey('raw', raw, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+  return toB64(new Uint8Array(await subtle().sign('HMAC', key, enc.encode(`${type}
+${id}`))))
+}
+
 export interface Sealed {
   id: string
   type: string

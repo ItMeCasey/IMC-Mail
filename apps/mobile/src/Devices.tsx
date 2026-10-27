@@ -4,7 +4,7 @@ import { CameraView, useCameraPermissions } from 'expo-camera'
 import * as Clipboard from 'expo-clipboard'
 import type { SyncDevice, SyncStatus } from '@imc/core'
 import { notifyChanged } from './changes'
-import { pair, sync, syncNow, unpair, watchSync } from './phonesync'
+import { pair, rotateKey, sync, syncNow, unpair, watchSync } from './phonesync'
 import { describeError, when } from './screens'
 import { AppBar, BackIcon, IconButton } from './chrome'
 import { Body, Button, colors, ErrorText, Link, Note, Screen } from './ui'
@@ -18,6 +18,7 @@ export default function Devices({ onBack }: { onBack: () => void }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [permission, askCamera] = useCameraPermissions()
+  const [newCode, setNewCode] = useState<string | null>(null)
 
   useEffect(() => watchSync(setStatus), [])
 
@@ -50,6 +51,26 @@ export default function Devices({ onBack }: { onBack: () => void }) {
     setScanning(true)
   }
 
+  const replaceKey = () =>
+    Alert.alert('Replace the key?', 'This ends the sync group on the server and starts a new one with a new key. Your other devices stop syncing until you add them again with the new code. Nothing is lost.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Replace',
+        style: 'destructive',
+        onPress: () => {
+          setBusy(true)
+          setError(null)
+          rotateKey()
+            .then((code) => {
+              setNewCode(code)
+              setStatus(sync.status())
+            })
+            .catch((e: unknown) => setError(describeError(e)))
+            .finally(() => setBusy(false))
+        }
+      }
+    ])
+
   const stop = () =>
     Alert.alert('Stop syncing?', 'Your mail and settings stay on this phone, but it will no longer share changes with your other devices.', [
       { text: 'Cancel', style: 'cancel' },
@@ -75,7 +96,7 @@ export default function Devices({ onBack }: { onBack: () => void }) {
               Syncing as {status.deviceName}. {status.syncing ? 'Syncing now…' : status.lastSyncAt ? `Last synced ${when(status.lastSyncAt)}.` : 'Not synced yet.'}
             </Note>
             {status.error !== null && <ErrorText>{status.error}</ErrorText>}
-            {status.revoked && <ErrorText>Another device removed this phone. Stop syncing, then pair again.</ErrorText>}
+            {status.revoked && <ErrorText>Sync was reset or another device removed this phone. Stop syncing, then pair with the new code.</ErrorText>}
             <Button onPress={() => void syncNow()} disabled={status.syncing}>
               Sync now
             </Button>
@@ -88,6 +109,20 @@ export default function Devices({ onBack }: { onBack: () => void }) {
                 <Text style={{ color: colors.muted, fontSize: 12 }}>Last seen {when(d.lastSeen)}</Text>
               </View>
             ))}
+            {newCode !== null && (
+              <View style={st.device}>
+                <Text style={{ color: colors.text }}>New pairing code</Text>
+                <Text selectable style={{ color: colors.soft, fontSize: 11, fontFamily: 'monospace' }}>
+                  {newCode}
+                </Text>
+                <Link onPress={() => void Clipboard.setStringAsync(newCode)}>Copy code</Link>
+                <Note>On each other device, turn sync off, then join with this code. Anyone with it can read your synced settings, so close this when you are done.</Note>
+                <Link onPress={() => setNewCode(null)}>Hide</Link>
+              </View>
+            )}
+            <Button kind="quiet" onPress={replaceKey} disabled={busy}>
+              Replace the key…
+            </Button>
             <Button kind="danger" onPress={stop}>
               Stop syncing on this phone
             </Button>

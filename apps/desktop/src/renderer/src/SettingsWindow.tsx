@@ -273,6 +273,7 @@ function Devices({ hidden }: { hidden: boolean }) {
   const [error, setError] = useState<string | null>(null)
   const [joinCode, setJoinCode] = useState('')
   const [confirmOff, setConfirmOff] = useState(false)
+  const [confirmRotate, setConfirmRotate] = useState(false)
   const [copied, setCopied] = useState(false)
 
   // The code holds the key: never keep it on screen while stream-safe mode is on.
@@ -357,7 +358,7 @@ function Devices({ hidden }: { hidden: boolean }) {
             </p>
             <p role="status" className={s.error || s.revoked ? 'text-alert' : 'text-ink-3'}>
               {s.revoked
-                ? 'Another device removed this one from sync. Turn sync off here, then on again to rejoin.'
+                ? 'Sync was reset or another device removed this one. Turn sync off here, then join with the new code from the device that reset it.'
                 : (s.error ?? (s.syncing ? 'Syncing…' : s.lastSyncAt ? `Last synced ${syncTime.format(s.lastSyncAt)}` : 'Waiting for the first sync'))}
             </p>
             {!s.revoked && (
@@ -436,7 +437,33 @@ function Devices({ hidden }: { hidden: boolean }) {
               </li>
             ))}
           </ul>
-          <p className="text-xs text-ink-3">A removed device stops syncing at once. To lock it out for good, also change what it could read: it keeps the settings it already has.</p>
+          <p className="text-xs text-ink-3">A removed device stops syncing at once, but it keeps the settings it already has and still holds the old key. To cut it off for good, replace the key.</p>
+          {confirmRotate ? (
+            <div className="space-y-2">
+              <p className="text-sm text-ink-3">This ends the sync group on the server and starts a new one with a new key. Your other devices stop syncing until you add them again with the new code. Nothing is lost: every device keeps its settings.</p>
+              <div className="flex gap-2">
+                <button
+                  className="h-9 rounded-md border border-alert px-4 text-alert hover:bg-hover disabled:opacity-50"
+                  disabled={busy !== null || hidden}
+                  onClick={() =>
+                    void run('rotate', async () => {
+                      setPairing(await window.imc.invoke('sync:rotate'))
+                      setConfirmRotate(false)
+                    })
+                  }
+                >
+                  {busy === 'rotate' ? 'Replacing…' : 'Yes, replace the key'}
+                </button>
+                <button className="h-9 rounded-md border border-line-strong px-4 text-ink hover:bg-hover" onClick={() => setConfirmRotate(false)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button className={row} disabled={busy !== null} onClick={() => setConfirmRotate(true)}>
+              Replace the key…
+            </button>
+          )}
         </Section>
       )}
 

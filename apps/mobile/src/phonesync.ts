@@ -67,6 +67,14 @@ export async function pair(code: string): Promise<SyncStatus> {
   return syncNow()
 }
 
+/** Replaces the key (see SyncClient.rotate) and returns the new pairing code to add the other devices with. */
+export async function rotateKey(): Promise<string> {
+  const p = await sync.rotate()
+  notifyChanged()
+  void syncNow()
+  return sync.pairingCode(p)
+}
+
 export async function unpair(): Promise<void> {
   await sync.disable()
   notifyChanged()

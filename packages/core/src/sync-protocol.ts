@@ -76,6 +76,11 @@ export interface Pairing {
   groupId: string
   /** The group's data key. Anyone holding this code can read and write the synced data. */
   key: string
+  /**
+   * How records are named on the server: 'plain' groups (made before opaque names) use the real id; 'opaque' ones name
+   * each record by a keyed hash. Left out, it means plain.
+   */
+  ids?: 'plain' | 'opaque'
 }
 
 /**
@@ -83,7 +88,7 @@ export interface Pairing {
  * is shown only on request and is never sent to the server.
  */
 export function encodePairing(p: Pairing): string {
-  return PREFIX + toB64(new TextEncoder().encode(JSON.stringify({ v: 1, s: p.server, g: p.groupId, k: p.key })))
+  return PREFIX + toB64(new TextEncoder().encode(JSON.stringify({ v: p.ids === 'opaque' ? 2 : 1, s: p.server, g: p.groupId, k: p.key })))
 }
 
 /** Reads a pairing code, or returns null if it is not one, or is damaged, or points anywhere but an https server. */
@@ -92,10 +97,10 @@ export function decodePairing(text: string): Pairing | null {
   if (!t.startsWith(PREFIX)) return null
   try {
     const j = JSON.parse(new TextDecoder().decode(fromB64(t.slice(PREFIX.length)))) as { v?: unknown; s?: unknown; g?: unknown; k?: unknown }
-    if (j.v !== 1 || typeof j.s !== 'string' || typeof j.g !== 'string' || typeof j.k !== 'string') return null
+    if ((j.v !== 1 && j.v !== 2) || typeof j.s !== 'string' || typeof j.g !== 'string' || typeof j.k !== 'string') return null
     const server = safeWebUrl(j.s)
     if (!server || !server.startsWith('https://') || !id.safeParse(j.g).success || !isDataKey(j.k)) return null
-    return { server: server.replace(/\/+$/, ''), groupId: j.g, key: j.k }
+    return { server: server.replace(/\/+$/, ''), groupId: j.g, key: j.k, ids: j.v === 2 ? 'opaque' : 'plain' }
   } catch {
     return null
   }

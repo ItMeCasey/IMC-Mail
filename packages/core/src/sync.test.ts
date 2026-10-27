@@ -9,6 +9,7 @@ import {
   newDeviceId,
   newDeviceKeys,
   newGroupId,
+  opaqueId,
   openPayload,
   sealPayload,
   signText,
@@ -197,13 +198,26 @@ describe('merge', () => {
 })
 
 describe('protocol', () => {
-  it('round-trips a pairing code', async () => {
+  it('round-trips a pairing code, and says whether records are named by hash', async () => {
     const p = { server: 'https://sync.itmecasey.com', groupId: newGroupId(), key: newDataKey() }
     const code = encodePairing(p)
     expect(code.startsWith('imcsync1:')).toBe(true)
-    expect(decodePairing(code)).toEqual(p)
+    // A code without a scheme is an older, plain-named group.
+    expect(decodePairing(code)).toEqual({ ...p, ids: 'plain' })
     // Pasted with line breaks or spaces, as a recovery code might be.
-    expect(decodePairing(` ${code.slice(0, 20)}\n${code.slice(20)} `)).toEqual(p)
+    expect(decodePairing(` ${code.slice(0, 20)}\n${code.slice(20)} `)).toEqual({ ...p, ids: 'plain' })
+    expect(decodePairing(encodePairing({ ...p, ids: 'opaque' }))).toEqual({ ...p, ids: 'opaque' })
+  })
+
+  it('names a record by a keyed hash that depends on the key, the kind and the id', async () => {
+    const a = newDataKey()
+    const real = 'me@x.co\u001fmsg-1@x'
+    const id = await opaqueId(a, 'label', real)
+    expect(id).toMatch(/^[A-Za-z0-9_-]{43}$/)
+    expect(id).not.toContain('me@x.co')
+    expect(await opaqueId(a, 'label', real)).toBe(id)
+    expect(await opaqueId(a, 'snooze', real)).not.toBe(id)
+    expect(await opaqueId(newDataKey(), 'label', real)).not.toBe(id)
   })
 
   it('refuses a pairing code that is damaged or points somewhere unsafe', () => {
