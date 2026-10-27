@@ -460,6 +460,7 @@ export const ipcContract = {
     input: z.undefined(),
     output: z.object({
       closeToTray: z.boolean(),
+      showLogos: z.boolean(),
       streamerFeatures: z.boolean(),
       showHolidays: z.boolean(),
       holidayCountry: z.string(),
@@ -476,6 +477,7 @@ export const ipcContract = {
   'app:setPrefs': {
     input: z.object({
       closeToTray: z.boolean().optional(),
+      showLogos: z.boolean().optional(),
       streamerFeatures: z.boolean().optional(),
       showHolidays: z.boolean().optional(),
       holidayCountry: z.string().regex(/^[A-Z]{2}$/).optional(),
@@ -509,6 +511,14 @@ export const ipcContract = {
   'settings:control': {
     input: z.object({ action: z.enum(['minimize', 'close']) }),
     output: z.undefined()
+  },
+  /**
+   * Company logos for sender domains, as inline pictures (null where a domain has none). Empty while `showLogos` is off.
+   * The logos come from a favicon service, which sees the domains asked about.
+   */
+  'logos:get': {
+    input: z.object({ domains: z.array(z.string().max(253)).max(80) }),
+    output: z.record(z.string(), z.string().nullable())
   },
   /** Public holidays on days from `from` up to `to` (epoch ms) for the chosen country. Empty while holidays are off. */
   'calendar:holidays': {

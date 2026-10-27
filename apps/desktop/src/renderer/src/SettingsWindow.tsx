@@ -147,6 +147,29 @@ const TABS: { id: TabId; label: string; icon: LucideIcon }[] = [
 ]
 
 /** Public holidays in the calendar: on or off, and whose. */
+/** Whether to show each sender's company logo in the message list. */
+function Appearance() {
+  const qc = useQueryClient()
+  const prefs = useQuery({ queryKey: ['prefs'], queryFn: () => window.imc.invoke('app:prefs') })
+  const on = prefs.data?.showLogos ?? false
+  return (
+    <Section title="Message list">
+      <label className="flex items-start gap-2 text-sm">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          checked={on}
+          onChange={(e) => void window.imc.invoke('app:setPrefs', { showLogos: e.target.checked }).then(() => qc.invalidateQueries({ queryKey: ['prefs'] }))}
+        />
+        <span>
+          Show company logos
+          <span className="block text-xs text-ink-3">Shows the sender's logo beside each message. The logos come from Google's favicon service, which sees the sender's domain. They are kept on this computer.</span>
+        </span>
+      </label>
+    </Section>
+  )
+}
+
 function Holidays() {
   const qc = useQueryClient()
   const prefs = useQuery({ queryKey: ['prefs'], queryFn: () => window.imc.invoke('app:prefs') })
@@ -631,6 +654,7 @@ export default function SettingsWindow() {
 
           {current === 'calendar' && (
             <>
+              <Appearance />
               <Holidays />
               <Reminders />
               <CalendarSources hide={streamSafe.active} />

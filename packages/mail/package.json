@@ -10,7 +10,8 @@
     ".": "./src/index.ts",
     "./render": "./src/render.ts",
     "./test-db": "./src/test-db.ts",
-    "./holidays": "./src/holidays.ts"
+    "./holidays": "./src/holidays.ts",
+    "./logo": "./src/logo.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

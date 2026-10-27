@@ -6,6 +6,7 @@ import { CalendarDays } from 'lucide-react'
 import { describeTime } from './schedule'
 import SearchBox from './SearchBox'
 import type { Account, MessageSummary } from '@imc/core'
+import { Logo, useLogos } from './logo'
 import { Private, priv } from './streamsafe'
 import { tapeColor } from './tape'
 
@@ -152,6 +153,7 @@ export default function MessageList({
 }) {
   const color = new Map(accounts.map((a) => [a.id, a.color]))
   const email = new Map(accounts.map((a) => [a.id, a.email]))
+  const { on: logoOn, logoFor } = useLogos(messages.map((m) => m.fromAddr), hide)
   const empty = !loading && messages.length === 0
   // With a message open the sheet narrows to a two-line list so the reading pane has room.
   const compact = forceCompact || selectedId !== null
@@ -213,6 +215,7 @@ export default function MessageList({
                     role="img"
                     aria-label={priv(hide, email.get(m.accountId) ?? 'Account', 'Account')}
                   />
+                  {logoOn && <Logo logo={logoFor(m.fromAddr)} name={m.fromName || m.fromAddr || '?'} size={28} />}
                   <span className="min-w-0 flex-1">
                     <span className="flex items-baseline gap-2">
                       <span
@@ -313,6 +316,11 @@ export default function MessageList({
                       </td>
                       <td className={`${td} ${m.unread ? 'font-semibold text-ink' : 'text-ink-2'}`}>
                         {checked.has(m.id) && <Check size={14} strokeWidth={2} aria-label="Selected" className="mr-1 inline text-ink" />}
+                        {logoOn && (
+                          <span className="mr-2 inline-block align-middle">
+                            <Logo logo={logoFor(m.fromAddr)} name={m.fromName || m.fromAddr || '?'} size={18} />
+                          </span>
+                        )}
                         <Private active={hide}>{m.fromName || m.fromAddr || '(unknown)'}</Private>
                       </td>
                       <td className="px-3">

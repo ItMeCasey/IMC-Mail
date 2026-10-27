@@ -28,6 +28,7 @@ import { DEFAULT_NOTIFICATIONS, Notifier } from './notifications'
 import { loadOAuthConfig, signIn, TokenProvider } from './oauth'
 import { CalendarSync } from './calendar-sync'
 import { defaultHolidayCountry, holidayCountries, holidaysBetween } from './holidays'
+import { createLogos } from './logos'
 import { ReminderService } from './reminders'
 import { DeviceSync } from './sync'
 import { sqliteSyncStorage, syncAdapters, type PrefsAccess } from './sync-local'
@@ -56,6 +57,7 @@ const safeFilename = (name: string): string =>
   basename(name).replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').slice(0, 150) || 'attachment'
 
 let closeToTray = false
+let showLogos = true
 let streamerFeatures = true
 let showHolidays = false
 let holidayCountry = 'US'
@@ -259,6 +261,7 @@ app.whenReady().then(async () => {
   clearOpenedFiles()
   const userData = app.getPath('userData')
   db = openDb(join(userData, 'imc-mail.sqlite'))
+  const logos = createLogos({ dir: join(userData, 'logos'), fetchFn: (url, init) => fetch(url, init) })
   const store = new MailStore(db)
   const secrets = await safeStorageSecrets(join(userData, 'secrets.json'))
   // In dev, app.getAppPath() is apps/desktop; the repo root two levels up holds .google-oauth.json.
@@ -352,6 +355,7 @@ app.whenReady().then(async () => {
   })
   streamerFeatures = readSettings()['streamerFeatures'] !== false
   showHolidays = readSettings()['showHolidays'] === true
+  showLogos = readSettings()['showLogos'] !== false
   const savedCountry = readSettings()['holidayCountry']
   meetingReminders = readSettings()['meetingReminders'] !== false
   const savedLead = readSettings()['reminderLeadMinutes']
@@ -512,7 +516,7 @@ app.whenReady().then(async () => {
   const savePrefs = (): void =>
     writeFileSync(
       settingsFile,
-      JSON.stringify({ ...readSettings(), closeToTray, streamerFeatures, showHolidays, holidayCountry, meetingReminders, reminderLeadMinutes, holidayReminders }, null, 2)
+      JSON.stringify({ ...readSettings(), closeToTray, showLogos, streamerFeatures, showHolidays, holidayCountry, meetingReminders, reminderLeadMinutes, holidayReminders }, null, 2)
     )
   // Settings that follow you to your other devices (see sync-local.ts). Window behavior is not among them.
   const prefsAccess: PrefsAccess = {
@@ -902,9 +906,10 @@ app.whenReady().then(async () => {
     'update:install': () => {
       updater?.install()
     },
-    'app:prefs': () => ({ closeToTray, streamerFeatures, showHolidays, holidayCountry, meetingReminders, reminderLeadMinutes, holidayReminders }),
+    'app:prefs': () => ({ closeToTray, showLogos, streamerFeatures, showHolidays, holidayCountry, meetingReminders, reminderLeadMinutes, holidayReminders }),
     'app:setPrefs': (p) => {
       if (p.closeToTray !== undefined) closeToTray = p.closeToTray
+      if (p.showLogos !== undefined) showLogos = p.showLogos
       if (p.streamerFeatures !== undefined) applyStreamerFeatures(p.streamerFeatures)
       if (p.showHolidays !== undefined) showHolidays = p.showHolidays
       if (p.holidayCountry !== undefined) holidayCountry = p.holidayCountry
@@ -913,6 +918,7 @@ app.whenReady().then(async () => {
       if (p.holidayReminders !== undefined) holidayReminders = p.holidayReminders
       savePrefs()
     },
+    'logos:get': ({ domains }) => (showLogos ? logos.get(domains) : {}),
     'calendar:holidays': ({ from, to }) => (showHolidays && to > from ? holidaysBetween(holidayCountry, from, Math.min(to, from + 400 * 86_400_000)) : []),
     'calendar:holidayCountries': () => holidayCountries(),
     'labels:list': () => store.listLabels(),
