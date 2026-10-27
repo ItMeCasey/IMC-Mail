@@ -272,11 +272,13 @@ export class ImapClient {
     return out.sort((a, b) => a.uid - b.uid)
   }
 
-  /** The whole message as the server stores it. */
-  async fetchRaw(uid: number): Promise<Uint8Array> {
-    const r = await this.run(`UID FETCH ${uid} (BODY.PEEK[])`)
+  /** The message as the server stores it, or just its first `maxBytes` when given (a huge attachment need not come down). */
+  async fetchRaw(uid: number, maxBytes?: number): Promise<Uint8Array> {
+    const r = await this.run(`UID FETCH ${uid} (BODY.PEEK[]${maxBytes ? `<0.${Math.max(1, Math.floor(maxBytes))}>` : ''})`)
     for (const u of r.untagged) {
-      const body = this.fetched(u)?.get('BODY[]')
+      const f = this.fetched(u)
+      const key = f && [...f.keys()].find((k) => k.startsWith('BODY[]'))
+      const body = key ? f.get(key) : undefined
       if (body instanceof Uint8Array) return body
     }
     throw new ImapError(`Message ${uid} is not on the server any more`, 'no')

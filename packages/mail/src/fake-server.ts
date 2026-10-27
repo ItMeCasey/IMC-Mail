@@ -209,8 +209,10 @@ export class FakeServer {
     for (const m of this.pick(msgs, fetch[1]!)) {
       const flags = `(${(m.flags ?? []).join(' ')})`
       if (/BODY\.PEEK\[\]/i.test(items)) {
-        const bytes = enc.encode(m.raw)
-        out += `* ${m.uid} FETCH (UID ${m.uid} BODY[] {${bytes.length}}\r\n${m.raw})\r\n`
+        const part = /<0\.(\d+)>/.exec(items)
+        let bytes = enc.encode(m.raw)
+        if (part) bytes = bytes.slice(0, Number(part[1]))
+        out += `* ${m.uid} FETCH (UID ${m.uid} ${part ? 'BODY[]<0>' : 'BODY[]'} {${bytes.length}}\r\n${dec.decode(bytes)})\r\n`
       } else if (/HEADER\.FIELDS/i.test(items)) {
         const want = /HEADER\.FIELDS \(([^)]*)\)/i.exec(items)![1]!.split(' ').map((x) => x.toLowerCase())
         const head = m.raw.split('\r\n\r\n')[0]!.replace(/\r\n[ \t]/g, '\u0002')

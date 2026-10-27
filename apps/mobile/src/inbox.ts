@@ -1,5 +1,5 @@
 import { oauthProviders } from '@imc/core'
-import { ImapClient, type Summary } from '@imc/mail'
+import { ImapClient, parseMessage, type ParsedMessage, type Summary } from '@imc/mail'
 import { accessToken, type PhoneAccount } from './auth'
 import { tcpConnect } from './tcp'
 
@@ -22,6 +22,33 @@ export async function newestInbox(account: PhoneAccount, count = 25): Promise<Su
     const uids = await client.searchUids()
     const summaries = await client.fetchSummaries(uids.slice(-count))
     return summaries.sort((a, b) => (b.date ?? 0) - (a.date ?? 0) || b.uid - a.uid)
+  } finally {
+    await client.logout()
+  }
+}
+
+/** Most of a message to download: a very large attachment is cut off, and the text before it still reads fine. */
+const MAX_MESSAGE_BYTES = 3_000_000
+
+export interface OpenedMessage {
+  message: ParsedMessage
+  /** The message was longer than what was downloaded. */
+  truncated: boolean
+  /** How many bytes came down. */
+  rawBytes: number
+}
+
+/** Downloads one inbox message and reads it. Opening it marks it read, as in any mail app. */
+export async function readMessage(account: PhoneAccount, uid: number): Promise<OpenedMessage> {
+  const client = await connect(account)
+  try {
+    const inbox = (await client.list()).find((f) => f.specialUse === 'inbox')
+    if (!inbox) throw new Error('No inbox was found on this account')
+    await client.select(inbox.path, false)
+    const raw = await client.fetchRaw(uid, MAX_MESSAGE_BYTES)
+    const message = await parseMessage(raw)
+    await client.setFlags([uid], { add: ['\Seen'] }).catch(() => undefined)
+    return { message, truncated: raw.length >= MAX_MESSAGE_BYTES, rawBytes: raw.length }
   } finally {
     await client.logout()
   }

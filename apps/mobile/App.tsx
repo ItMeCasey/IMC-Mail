@@ -1,26 +1,16 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
-import Constants from 'expo-constants'
 import { StatusBar } from 'expo-status-bar'
 import type { Summary } from '@imc/mail'
 import { loadAccounts, removeAccount, signIn, type PhoneAccount } from './src/auth'
 import { newestInbox } from './src/inbox'
 import Diagnostics from './src/Diagnostics'
+import MessageView from './src/MessageView'
+import { tell } from './src/report'
 
 type Screen = { name: 'home' } | { name: 'inbox'; account: PhoneAccount } | { name: 'diagnostics' }
 
 const describeError = (e: unknown): string => (e instanceof Error ? e.message : String(e))
-
-/** While developing, the computer that serves this app listens on port 8099 for a short status (never mail). */
-const tell = async (status: Record<string, unknown>): Promise<void> => {
-  const host = /^([^/:]+)/.exec(Constants.expoConfig?.hostUri ?? '')?.[1]
-  if (!host) return
-  try {
-    await fetch(`http://${host}:8099/report`, { method: 'POST', body: JSON.stringify(status) })
-  } catch {
-    // no computer listening; that is fine
-  }
-}
 
 const when = (ms: number | null): string => {
   if (ms === null) return ''
@@ -97,6 +87,7 @@ export default function App() {
 function Inbox({ account, onBack, onRemove }: { account: PhoneAccount; onBack: () => void; onRemove: () => void }) {
   const [list, setList] = useState<Summary[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [open, setOpen] = useState<Summary | null>(null)
 
   const load = useCallback(async () => {
     setList(null)
@@ -113,6 +104,20 @@ function Inbox({ account, onBack, onRemove }: { account: PhoneAccount; onBack: (
 
   useEffect(() => void load(), [load])
 
+  if (open) {
+    return (
+      <MessageView
+        account={account}
+        summary={open}
+        onBack={() => {
+          // Opening a message marked it read, so show it that way in the list.
+          setList((l) => l?.map((x) => (x.uid === open.uid && !x.flags.includes('\\Seen') ? { ...x, flags: [...x.flags, '\\Seen'] } : x)) ?? null)
+          setOpen(null)
+        }}
+      />
+    )
+  }
+
   return (
     <ScrollView contentContainerStyle={s.body}>
       <Pressable accessibilityRole="button" onPress={onBack}>
@@ -125,7 +130,7 @@ function Inbox({ account, onBack, onRemove }: { account: PhoneAccount; onBack: (
       {list?.map((m) => {
         const unread = !m.flags.includes('\\Seen')
         return (
-          <View key={m.uid} style={s.row}>
+          <Pressable key={m.uid} accessibilityRole="button" onPress={() => setOpen(m)} style={s.row}>
             <View style={s.rowHead}>
               <Text numberOfLines={1} style={[s.from, unread && s.unread]}>
                 {m.from?.name || m.from?.address || '(unknown sender)'}
@@ -135,7 +140,7 @@ function Inbox({ account, onBack, onRemove }: { account: PhoneAccount; onBack: (
             <Text numberOfLines={1} style={[s.subject, unread && s.unread]}>
               {m.subject || '(no subject)'}
             </Text>
-          </View>
+          </Pressable>
         )
       })}
       <Pressable accessibilityRole="button" onPress={() => void load()}>
