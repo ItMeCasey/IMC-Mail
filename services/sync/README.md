@@ -107,6 +107,7 @@ To move to another host: stop the service, copy that folder, start it there, and
 
 ## Not handled yet
 
+- The admin dashboard (`ADMIN_TOKEN`, 24+ characters; port `ADMIN_PORT`, default 8789, on 127.0.0.1 only): overview and traffic chart, groups with delete and "delete unused for N days", busiest addresses with ban/unban, a switch to close new signups, an event feed, and restart. Reach it with `ssh -L 8789:127.0.0.1:8789 itmecasey-droplet` and open http://localhost:8789. It cannot read anyone data.
 - Deletion records older than 180 days are dropped (a device that stays off longer could bring a deleted item back).
 - Key replacement is by starting a new group: `DELETE /v1/group` ends the old one (any member may call it), and the other devices join the new one with its pairing code.
 - A removed device loses access at once, but it still holds the data key. Rotating the key to lock it out of future records is a later step.

@@ -12,6 +12,7 @@ import {
   verifyText,
   type SyncResponse
 } from '@imc/core'
+import type { Metrics } from './metrics'
 import { MAX_DEVICES_PER_GROUP, type DeviceRow, type SyncStore } from './store'
 
 // The logic of the sync server, apart from the HTTP wrapper so it can be tested directly.
@@ -62,6 +63,8 @@ export interface Deps {
   now: () => number
   /** Most groups the server will hold. */
   maxGroups?: number
+  /** Traffic counts for the admin dashboard. */
+  metrics?: Metrics
 }
 
 const fail = (status: number, error: string): Res => ({ status, json: { error } })
@@ -102,7 +105,18 @@ async function authenticate(req: Req, deps: Deps): Promise<Authed | Res> {
   return { groupId: auth.groupId, device }
 }
 
+/** Answers one request: banned addresses are turned away first, and every answer is counted for the dashboard. */
 export async function handle(req: Req, deps: Deps): Promise<Res> {
+  if (req.path !== '/healthz' && deps.store.isBanned(req.ip)) {
+    deps.metrics?.hit(req.ip, 403, true)
+    return fail(403, 'Not allowed')
+  }
+  const res = await route(req, deps)
+  deps.metrics?.hit(req.ip, res.status)
+  return res
+}
+
+async function route(req: Req, deps: Deps): Promise<Res> {
   const { method, path } = req
   if (path === '/healthz') return method === 'GET' ? { status: 200, json: { ok: true } } : fail(405, 'Method not allowed')
 
@@ -111,9 +125,10 @@ export async function handle(req: Req, deps: Deps): Promise<Res> {
     const body = createGroupRequest.safeParse(parseJson(req.bodyText))
     if (!body.success) return fail(400, 'Not a valid request')
     if (!deps.limiter.take('create', req.ip, 5, HOUR)) return fail(429, 'Too many requests')
-    if (deps.store.groupCount() >= (deps.maxGroups ?? 5000)) return fail(503, 'This server is not taking new groups')
+    if (deps.store.flag('signups') === 'closed' || deps.store.groupCount() >= (deps.maxGroups ?? 5000)) return fail(503, 'This server is not taking new groups')
     const { groupId, joinHash: hash, device } = body.data
     const made = deps.store.createGroup(groupId, hash, { id: device.id, publicKey: device.publicKey, name: device.name }, deps.now())
+    if (made) deps.metrics?.event('group created', req.ip)
     return made ? { status: 201, json: { ok: true } } : fail(409, 'That group already exists')
   }
 
@@ -129,6 +144,7 @@ export async function handle(req: Req, deps: Deps): Promise<Res> {
     const added = deps.store.addDevice(groupId, { id: device.id, publicKey: device.publicKey, name: device.name }, deps.now())
     if (added === 'full') return fail(409, `A group can have ${MAX_DEVICES_PER_GROUP} devices; remove one first`)
     if (added === 'taken') return fail(409, 'That device id is already in use')
+    deps.metrics?.event('device joined', req.ip)
     return { status: 200, json: { ok: true } }
   }
 

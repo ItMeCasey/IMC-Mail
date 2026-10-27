@@ -62,7 +62,86 @@ export class SyncStore {
         UNIQUE (group_id, type, rid)
       );
       CREATE INDEX IF NOT EXISTS record_group_seq ON record (group_id, seq);
+      CREATE TABLE IF NOT EXISTS ban (
+        ip TEXT PRIMARY KEY,
+        reason TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS flag (
+        name TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
     `)
+    for (const b of this.bans()) this.banned.add(b.ip)
+  }
+
+  // ---- for the admin dashboard ------------------------------------------------------------------------
+
+  /** Banned addresses, for a quick check on every request. */
+  private banned = new Set<string>()
+
+  isBanned(ip: string): boolean {
+    return this.banned.has(ip)
+  }
+
+  bans(): { ip: string; reason: string; createdAt: number }[] {
+    return this.db.prepare('SELECT ip, reason, created_at AS createdAt FROM ban ORDER BY created_at DESC').all() as unknown as { ip: string; reason: string; createdAt: number }[]
+  }
+
+  addBan(ip: string, reason: string, now: number): void {
+    this.db.prepare('INSERT INTO ban (ip, reason, created_at) VALUES (?, ?, ?) ON CONFLICT(ip) DO UPDATE SET reason = excluded.reason').run(ip, reason.slice(0, 200), now)
+    this.banned.add(ip)
+  }
+
+  removeBan(ip: string): boolean {
+    const r = this.db.prepare('DELETE FROM ban WHERE ip = ?').run(ip)
+    this.banned.delete(ip)
+    return Number(r.changes) > 0
+  }
+
+  flag(name: string): string | null {
+    const r = this.db.prepare('SELECT value FROM flag WHERE name = ?').get(name) as { value: string } | undefined
+    return r?.value ?? null
+  }
+
+  setFlag(name: string, value: string | null): void {
+    if (value === null) this.db.prepare('DELETE FROM flag WHERE name = ?').run(name)
+    else this.db.prepare('INSERT INTO flag (name, value) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET value = excluded.value').run(name, value)
+  }
+
+  /** Totals across the server, and how big the database file is. */
+  totals(): { groups: number; devices: number; records: number; deletions: number; bytes: number } {
+    const n = (sql: string) => (this.db.prepare(sql).get() as { n: number }).n
+    return {
+      groups: n('SELECT COUNT(*) AS n FROM sync_group'),
+      devices: n('SELECT COUNT(*) AS n FROM device'),
+      records: n('SELECT COUNT(*) AS n FROM record WHERE deleted = 0'),
+      deletions: n('SELECT COUNT(*) AS n FROM record WHERE deleted = 1'),
+      bytes: n('SELECT page_count * page_size AS n FROM pragma_page_count(), pragma_page_size()')
+    }
+  }
+
+  /** Every group, newest activity first: how many devices and records it has and when a device last came by. */
+  groupList(limit: number): { id: string; createdAt: number; devices: number; records: number; payloadBytes: number; lastSeen: number }[] {
+    return this.db
+      .prepare(
+        `SELECT g.id AS id, g.created_at AS createdAt,
+           (SELECT COUNT(*) FROM device d WHERE d.group_id = g.id) AS devices,
+           (SELECT COUNT(*) FROM record r WHERE r.group_id = g.id) AS records,
+           (SELECT COALESCE(SUM(LENGTH(r.payload)), 0) FROM record r WHERE r.group_id = g.id) AS payloadBytes,
+           (SELECT COALESCE(MAX(d.last_seen), g.created_at) FROM device d WHERE d.group_id = g.id) AS lastSeen
+         FROM sync_group g ORDER BY lastSeen DESC LIMIT ?`
+      )
+      .all(limit) as unknown as { id: string; createdAt: number; devices: number; records: number; payloadBytes: number; lastSeen: number }[]
+  }
+
+  /** Deletes groups no device has used since `before` (epoch ms). Returns how many went. */
+  deleteInactive(before: number): number {
+    const old = this.db
+      .prepare('SELECT g.id AS id FROM sync_group g WHERE COALESCE((SELECT MAX(d.last_seen) FROM device d WHERE d.group_id = g.id), g.created_at) < ?')
+      .all(before) as unknown as { id: string }[]
+    for (const g of old) this.deleteGroup(g.id)
+    return old.length
   }
 
   close(): void {
