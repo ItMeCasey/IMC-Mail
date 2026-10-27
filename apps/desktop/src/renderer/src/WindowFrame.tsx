@@ -97,13 +97,13 @@ function TitleBar({ maximized }: { maximized: boolean }) {
           )}
         </button>
         <button
-          className={`${ctl} w-auto gap-1.5 px-3`}
+          className="flex h-8 items-center justify-center gap-1.5 bg-accent px-3 text-on-accent transition-colors duration-(--dur-fast) hover:bg-accent-hover focus-visible:-outline-offset-2"
           aria-label="Support us"
           title="Support us"
           onClick={() => window.open(SUPPORT_URL, '_blank', 'noopener,noreferrer')}
         >
           <Heart size={14} strokeWidth={1.75} aria-hidden />
-          <span className="text-xs">Support Us</span>
+          <span className="text-xs font-semibold whitespace-nowrap">Support Us</span>
         </button>
         <button className={ctl} aria-label="Minimize" title="Minimize" onClick={() => control('minimize')}>
           <Minus size={14} strokeWidth={1.75} aria-hidden />
