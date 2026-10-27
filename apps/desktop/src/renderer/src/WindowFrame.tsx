@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Copy, Minus, Settings, ShieldCheck, Square, X } from 'lucide-react'
+import { Copy, Heart, Minus, Settings, ShieldCheck, Square, X } from 'lucide-react'
 import appIcon from './assets/mail-64.png'
 import { useStreamSafe } from './streamsafe'
 
@@ -65,6 +65,9 @@ export function ResizeGrips({ minW, minH }: { minW: number; minH: number }) {
   return GRIPS.map((g) => <Grip key={g.edge} {...g} minW={minW} minH={minH} />)
 }
 
+/** Where the Support Us button takes you. It opens in the browser. */
+const SUPPORT_URL = 'https://itmecasey.com/support/'
+
 const ctl =
   'grid h-8 w-11 place-items-center text-ink-2 transition-colors duration-(--dur-fast) hover:bg-hover hover:text-ink focus-visible:-outline-offset-2'
 
@@ -92,6 +95,15 @@ function TitleBar({ maximized }: { maximized: boolean }) {
               <span className="text-xs">Stream-safe on</span>
             </>
           )}
+        </button>
+        <button
+          className={`${ctl} w-auto gap-1.5 px-3`}
+          aria-label="Support us"
+          title="Support us"
+          onClick={() => window.open(SUPPORT_URL, '_blank', 'noopener,noreferrer')}
+        >
+          <Heart size={14} strokeWidth={1.75} aria-hidden />
+          <span className="text-xs">Support Us</span>
         </button>
         <button className={ctl} aria-label="Minimize" title="Minimize" onClick={() => control('minimize')}>
           <Minus size={14} strokeWidth={1.75} aria-hidden />
