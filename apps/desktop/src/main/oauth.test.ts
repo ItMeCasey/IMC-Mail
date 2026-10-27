@@ -195,6 +195,28 @@ describe('signIn', () => {
     expect(r.email).toBe('me@outlook.com')
   })
 
+  it('names the mail resource when Microsoft consent also covers the calendar', async () => {
+    const bodies: URLSearchParams[] = []
+    const fetchFn = vi.fn(async (_u: string | URL | Request, init?: RequestInit) => {
+      bodies.push(init?.body as URLSearchParams)
+      return jsonRes(200, { access_token: 'at', refresh_token: 'rt', id_token: idToken({ preferred_username: 'me@outlook.com' }) })
+    })
+    let asked = ''
+    const open = (url: string) => {
+      const q = new URL(url).searchParams
+      asked = q.get('scope') ?? ''
+      void fetch(`${q.get('redirect_uri')}?code=c&state=${q.get('state')}`)
+    }
+    await signIn(oauthProviders.microsoft, { clientId: 'cid' }, { fetchFn: fetchFn as unknown as typeof fetch, openUrl: open, calendar: true })
+    // Both resources are asked for in the browser, but the token request is for the mail one, which Microsoft requires.
+    expect(asked).toContain('Calendars.Read')
+    expect(bodies[0]!.get('scope')).toBe(oauthProviders.microsoft.scopes.join(' '))
+    expect(bodies[0]!.get('scope')).not.toContain('Calendars.Read')
+
+    await signIn(oauthProviders.microsoft, { clientId: 'cid' }, { fetchFn: fetchFn as unknown as typeof fetch, openUrl: open })
+    expect(bodies[1]!.has('scope')).toBe(false)
+  })
+
   it('fails clearly when no refresh token comes back', async () => {
     const fetchFn = async () => jsonRes(200, { access_token: 'at', id_token: idToken({ email: 'a@b.c' }) })
     await expect(

@@ -46,17 +46,20 @@ export default function Agenda({
     queryKey: ['calendar', from, to],
     queryFn: () => window.imc.invoke('calendar:list', { from, to })
   })
+  const holidays = useQuery({
+    queryKey: ['calendar', 'holidays', from, to],
+    queryFn: () => window.imc.invoke('calendar:holidays', { from, to })
+  })
   const [editing, setEditing] = useState<CalendarEvent | 'new' | null>(null)
   const step = (n: number) => setCursor((c) => new Date(c.getFullYear(), c.getMonth() + n, 1))
 
   const days = useMemo(() => {
-    const by = new Map<number, CalendarOccurrence[]>()
-    for (const o of [...(list.data ?? [])].sort((a, b) => a.start - b.start)) {
-      const k = startOfDay(o.start)
-      by.set(k, [...(by.get(k) ?? []), o])
-    }
-    return [...by]
-  }, [list.data])
+    const by = new Map<number, { holidays: string[]; items: CalendarOccurrence[] }>()
+    const at = (k: number) => by.get(k) ?? by.set(k, { holidays: [], items: [] }).get(k)!
+    for (const h of holidays.data ?? []) at(new Date(`${h.date}T00:00:00`).getTime()).holidays.push(h.name)
+    for (const o of [...(list.data ?? [])].sort((a, b) => a.start - b.start)) at(startOfDay(o.start)).items.push(o)
+    return [...by].sort((a, b) => a[0] - b[0])
+  }, [list.data, holidays.data])
 
   return (
     <section aria-label="Calendar" className="flex min-w-0 flex-1 flex-col bg-sheet">
@@ -113,6 +116,7 @@ export default function Agenda({
           year={cursor.getFullYear()}
           month={cursor.getMonth()}
           occurrences={list.data ?? []}
+          holidays={holidays.data ?? []}
           hide={hide}
           onOpen={(e) => setEditing(e)}
           onNew={(at) => {
@@ -124,7 +128,7 @@ export default function Agenda({
       )}
       <div className={`min-h-0 flex-1 overflow-y-auto ${mode === 'month' ? 'hidden' : ''}`}>
         {list.isPending && <p className="p-4 text-ink-3">Loading…</p>}
-        {list.data && days.length === 0 && (
+        {list.data && holidays.data && days.length === 0 && (
           <div className="p-6 text-ink-2">
             <p className="font-medium text-ink">Nothing in the next {DAYS} days.</p>
             <p className="mt-1 max-w-prose text-sm">
@@ -133,11 +137,14 @@ export default function Agenda({
             </p>
           </div>
         )}
-        {days.map(([day, items]) => (
+        {days.map(([day, { holidays: names, items }]) => (
           <div key={day}>
-            <h3 className="sticky top-0 border-b border-line bg-sheet px-4 py-1.5 text-sm font-medium text-ink-2">
-              {day === from ? 'Today · ' : ''}
-              {dayHead.format(day)}
+            <h3 className="sticky top-0 flex items-baseline gap-3 border-b border-line bg-sheet px-4 py-1.5 text-sm font-medium text-ink-2">
+              <span>
+                {day === from ? 'Today · ' : ''}
+                {dayHead.format(day)}
+              </span>
+              {names.length > 0 && <span className="rounded-sm bg-selected px-1.5 text-xs font-normal">{names.join(' · ')}</span>}
             </h3>
             <ul>
               {items.map((o) => (

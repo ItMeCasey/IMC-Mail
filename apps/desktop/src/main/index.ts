@@ -26,6 +26,7 @@ import { TemplateService } from './templates'
 import { DEFAULT_NOTIFICATIONS, Notifier } from './notifications'
 import { loadOAuthConfig, signIn, TokenProvider } from './oauth'
 import { CalendarSync } from './calendar-sync'
+import { defaultHolidayCountry, holidayCountries, holidaysBetween } from './holidays'
 import { safeStorageSecrets } from './secrets'
 import { MailStore, type AccountRow } from './store'
 import { testConnection } from './sync/engine'
@@ -52,6 +53,8 @@ const safeFilename = (name: string): string =>
 
 let closeToTray = false
 let streamerFeatures = true
+let showHolidays = false
+let holidayCountry = 'US'
 let quitting = false
 let tray: Tray | null = null
 let updater: Updater | null = null
@@ -273,6 +276,9 @@ app.whenReady().then(async () => {
     }
   })
   streamerFeatures = readSettings()['streamerFeatures'] !== false
+  showHolidays = readSettings()['showHolidays'] === true
+  const savedCountry = readSettings()['holidayCountry']
+  holidayCountry = typeof savedCountry === 'string' && /^[A-Z]{2}$/.test(savedCountry) ? savedCountry : defaultHolidayCountry(app.getLocale())
   if (!streamerFeatures) streamSafe.setEnabled(false)
   streamSafe.start()
 
@@ -729,12 +735,16 @@ app.whenReady().then(async () => {
     'update:install': () => {
       updater?.install()
     },
-    'app:prefs': () => ({ closeToTray, streamerFeatures }),
+    'app:prefs': () => ({ closeToTray, streamerFeatures, showHolidays, holidayCountry }),
     'app:setPrefs': (p) => {
       if (p.closeToTray !== undefined) closeToTray = p.closeToTray
       if (p.streamerFeatures !== undefined) applyStreamerFeatures(p.streamerFeatures)
-      writeFileSync(settingsFile, JSON.stringify({ ...readSettings(), closeToTray, streamerFeatures }, null, 2))
+      if (p.showHolidays !== undefined) showHolidays = p.showHolidays
+      if (p.holidayCountry !== undefined) holidayCountry = p.holidayCountry
+      writeFileSync(settingsFile, JSON.stringify({ ...readSettings(), closeToTray, streamerFeatures, showHolidays, holidayCountry }, null, 2))
     },
+    'calendar:holidays': ({ from, to }) => (showHolidays && to > from ? holidaysBetween(holidayCountry, from, Math.min(to, from + 400 * 86_400_000)) : []),
+    'calendar:holidayCountries': () => holidayCountries(),
     'labels:list': () => store.listLabels(),
     'labels:create': ({ name }) => store.createLabel(name),
     'labels:delete': ({ id }) => {

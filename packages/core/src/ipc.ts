@@ -437,11 +437,37 @@ export const ipcContract = {
   /** Restarts into a downloaded update. */
   'update:install': { input: z.undefined(), output: z.undefined() },
   /** App-wide choices kept on this computer. */
-  'app:prefs': { input: z.undefined(), output: z.object({ closeToTray: z.boolean(), streamerFeatures: z.boolean() }) },
-  /** `streamerFeatures` off hides stream-safe mode, the sponsorship board and mail categories: a plain mail client. */
+  'app:prefs': {
+    input: z.undefined(),
+    output: z.object({
+      closeToTray: z.boolean(),
+      streamerFeatures: z.boolean(),
+      showHolidays: z.boolean(),
+      holidayCountry: z.string()
+    })
+  },
+  /**
+   * `streamerFeatures` off hides stream-safe mode, the sponsorship board and mail categories: a plain mail client.
+   * `showHolidays` puts the public holidays of `holidayCountry` (an ISO 3166 code such as US or GB) in the calendar.
+   */
   'app:setPrefs': {
-    input: z.object({ closeToTray: z.boolean().optional(), streamerFeatures: z.boolean().optional() }),
+    input: z.object({
+      closeToTray: z.boolean().optional(),
+      streamerFeatures: z.boolean().optional(),
+      showHolidays: z.boolean().optional(),
+      holidayCountry: z.string().regex(/^[A-Z]{2}$/).optional()
+    }),
     output: z.undefined()
+  },
+  /** Public holidays on days from `from` up to `to` (epoch ms) for the chosen country. Empty while holidays are off. */
+  'calendar:holidays': {
+    input: z.object({ from: z.number(), to: z.number() }),
+    output: z.array(z.object({ date: z.string(), name: z.string() }))
+  },
+  /** Countries that have holiday data, by name. */
+  'calendar:holidayCountries': {
+    input: z.undefined(),
+    output: z.array(z.object({ code: z.string(), name: z.string() }))
   },
   /** Your labels, with how many messages carry each. Labels live on this computer only. */
   'labels:list': { input: z.undefined(), output: z.array(labelSchema) },

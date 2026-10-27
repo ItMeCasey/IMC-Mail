@@ -108,7 +108,7 @@ function TitleBar({ maximized }: { maximized: boolean }) {
   )
 }
 
-/** Rounded, outlined window with its own title bar and resize edges. Square and borderless while maximized. */
+/** Rounded window with its own title bar and resize edges, and no outline. Square while maximized. */
 export default function WindowFrame({ children }: { children: React.ReactNode }) {
   const [maximized, setMaximized] = useState(false)
   const apply = useCallback((m: boolean) => {
@@ -122,10 +122,7 @@ export default function WindowFrame({ children }: { children: React.ReactNode })
   }, [apply])
 
   return (
-    // The OS can make a transparent window a pixel smaller than the page it shows (display scaling
-    // rounds it), which cut off the right and bottom border. Leaving 2px of transparent margin there
-    // keeps the whole outline inside the window.
-    <div className={`relative overflow-hidden bg-sheet ${maximized ? 'h-full' : 'mr-0.5 h-[calc(100%-2px)] rounded-(--win-radius) border border-line-strong'}`}>
+    <div className={`relative h-full overflow-hidden bg-sheet ${maximized ? '' : 'rounded-(--win-radius)'}`}>
       <div className="flex h-full flex-col">
         <TitleBar maximized={maximized} />
         <div className="relative min-h-0 flex-1">{children}</div>

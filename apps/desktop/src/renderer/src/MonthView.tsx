@@ -11,6 +11,7 @@ export default function MonthView({
   year,
   month,
   occurrences,
+  holidays,
   hide,
   onOpen,
   onNew
@@ -18,6 +19,8 @@ export default function MonthView({
   year: number
   month: number
   occurrences: CalendarOccurrence[]
+  /** Public holidays to mark on their days. */
+  holidays: { date: string; name: string }[]
   hide: boolean
   onOpen: (e: CalendarEvent) => void
   /** A day was clicked: its date at 9:00 local, as epoch ms. */
@@ -26,6 +29,8 @@ export default function MonthView({
   const weeks = monthGrid(year, month)
   const byDay = groupByDay(occurrences)
   const today = dayKey(new Date())
+  const holidaysByDay = new Map<string, string[]>()
+  for (const h of holidays) holidaysByDay.set(h.date, [...(holidaysByDay.get(h.date) ?? []), h.name])
   const heads = weeks[0]!.map((d) => weekday.format(d))
 
   return (
@@ -50,16 +55,19 @@ export default function MonthView({
                   role="gridcell"
                   aria-label={d.toDateString()}
                   onClick={() => onNew(new Date(d.getFullYear(), d.getMonth(), d.getDate(), 9).getTime())}
-                  className={`min-w-0 cursor-default space-y-0.5 border-r border-b border-line p-1 ${inMonth ? '' : 'bg-rail text-ink-3'}`}
+                  aria-current={key === today ? 'date' : undefined}
+                  className={`min-w-0 cursor-default space-y-0.5 border-r border-b border-line p-1 ${inMonth ? '' : 'bg-rail text-ink-3'} ${key === today ? 'relative z-10 ring-2 ring-accent ring-inset' : ''}`}
                 >
                   <div className="flex">
-                    <span
-                      className={`num grid h-6 min-w-6 place-items-center rounded-sm px-1 text-sm ${key === today ? 'border border-accent font-semibold text-ink' : ''}`}
-                      aria-current={key === today ? 'date' : undefined}
-                    >
+                    <span className={`num grid h-6 min-w-6 place-items-center px-1 text-sm ${key === today ? 'font-semibold text-ink' : ''}`}>
                       {d.getDate()}
                     </span>
                   </div>
+                  {(holidaysByDay.get(key) ?? []).map((name) => (
+                    <span key={name} title={name} className="block truncate rounded-sm bg-selected px-1.5 text-xs leading-5 text-ink-2">
+                      {name}
+                    </span>
+                  ))}
                   {items.slice(0, SHOWN).map((o) => (
                     <button
                       key={`${o.event.id}:${o.start}`}

@@ -268,10 +268,19 @@ export async function signIn(
       buildAuthUrl(def, { clientId: client.clientId, redirectUri, state, challenge, calendar: o.calendar, loginHint: o.loginHint })
   })
 
+  // Microsoft issues a token for one resource at a time. When the consent also covers the calendar
+  // (a second resource), the code exchange has to say which one it wants: the mail one. The calendar
+  // token is fetched later from the refresh token.
   const t = await requestToken(
     def,
     client,
-    { grant_type: 'authorization_code', code, redirect_uri: redirectUri, code_verifier: verifier },
+    {
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: redirectUri,
+      code_verifier: verifier,
+      ...(def.id === 'microsoft' && o.calendar ? { scope: def.scopes.join(' ') } : {})
+    },
     fetchFn,
     now
   )
