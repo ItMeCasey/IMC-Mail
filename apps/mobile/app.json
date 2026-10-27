@@ -19,6 +19,7 @@
       "expo-background-task",
       "expo-sharing",
       "./plugins/withLiveMail",
+      "./plugins/withNoMinify",
       [
         "expo-camera",
         {
