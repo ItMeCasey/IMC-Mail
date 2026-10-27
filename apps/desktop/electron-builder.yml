@@ -15,6 +15,7 @@ nsis:
   artifactName: IMC-Mail-Setup-${version}.${ext}
   oneClick: false
   allowToChangeInstallationDirectory: true
+  include: build/installer.nsh
 npmRebuild: false
 publish:
   provider: github

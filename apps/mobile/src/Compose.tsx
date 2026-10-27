@@ -36,10 +36,13 @@ const htmlToText = (html: string): string =>
     .trim()
 
 /** Writing a message: a bar with Send, the addressing rows, and a roomy body. */
-export default function Compose({ account, start, onDone }: { account: PhoneAccount; start?: ComposeStart; onDone: () => void }) {
+export default function Compose({ account: first, accounts = [], start, onDone }: { account: PhoneAccount; accounts?: PhoneAccount[]; start?: ComposeStart; onDone: () => void }) {
+  const [account, setAccount] = useState(first)
+  const [chooseFrom, setChooseFrom] = useState(false)
   const [to, setTo] = useState(start?.to ?? '')
   const [cc, setCc] = useState(start?.cc ?? '')
-  const [showCc, setShowCc] = useState(!!start?.cc)
+  const [showCc, setShowCc] = useState(!!start?.cc || !!start?.bcc)
+  const [bcc, setBcc] = useState(start?.bcc ?? '')
   const [subject, setSubject] = useState(start?.subject ?? '')
   const [text, setText] = useState(start?.text ?? '')
   const [files, setFiles] = useState<OutgoingAttachment[]>([])
@@ -74,12 +77,13 @@ export default function Compose({ account, start, onDone }: { account: PhoneAcco
     setError(null)
     const toList = parseList(to)
     const ccList = parseList(cc)
+    const bccList = parseList(bcc)
     if (toList.length === 0) return setError('Add someone to send this to.')
-    const bad = [...toList, ...ccList].find((a) => !validAddress(a.address))
+    const bad = [...toList, ...ccList, ...bccList].find((a) => !validAddress(a.address))
     if (bad) return setError(`"${bad.address}" is not an email address.`)
     setBusy(true)
     try {
-      await sendMail(account, { to: toList, cc: ccList, subject, text, attachments: files, inReplyTo: start?.inReplyTo ?? null, references: start?.references ?? [] })
+      await sendMail(account, { to: toList, cc: ccList, bcc: bccList, subject, text, attachments: files, inReplyTo: start?.inReplyTo ?? null, references: start?.references ?? [] })
       onDone()
     } catch (e) {
       setError(describeError(e))
@@ -106,9 +110,12 @@ export default function Compose({ account, start, onDone }: { account: PhoneAcco
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ flexGrow: 1 }}>
           <Row label="From">
-            <Text numberOfLines={1} style={st.fromText}>
-              {account.email}
-            </Text>
+            <Pressable accessibilityRole="button" disabled={accounts.length < 2} onPress={() => setChooseFrom(true)} style={{ flex: 1 }}>
+              <Text numberOfLines={1} style={st.fromText}>
+                {account.email}
+                {accounts.length > 1 ? '  ▾' : ''}
+              </Text>
+            </Pressable>
           </Row>
           <Row label="To">
             <TextInput value={to} onChangeText={setTo} keyboardType="email-address" autoCapitalize="none" autoCorrect={false} style={st.input} placeholder="name@example.com" placeholderTextColor={colors.faint} />
@@ -121,6 +128,11 @@ export default function Compose({ account, start, onDone }: { account: PhoneAcco
           {showCc && (
             <Row label="Cc">
               <TextInput value={cc} onChangeText={setCc} keyboardType="email-address" autoCapitalize="none" autoCorrect={false} style={st.input} />
+            </Row>
+          )}
+          {showCc && (
+            <Row label="Bcc">
+              <TextInput value={bcc} onChangeText={setBcc} keyboardType="email-address" autoCapitalize="none" autoCorrect={false} style={st.input} />
             </Row>
           )}
           <Row label="Subject">
@@ -156,6 +168,21 @@ export default function Compose({ account, start, onDone }: { account: PhoneAcco
           <Note style={{ marginLeft: 'auto', alignSelf: 'center', fontSize: 12 }}>{files.length > 0 ? `${files.length} attached` : ''}</Note>
         </View>
       </KeyboardAvoidingView>
+
+      <Sheet open={chooseFrom} onClose={() => setChooseFrom(false)}>
+        <MenuLabel>Send from</MenuLabel>
+        {accounts.map((a) => (
+          <MenuItem
+            key={a.email}
+            label={a.email}
+            selected={a.email === account.email}
+            onPress={() => {
+              setAccount(a)
+              setChooseFrom(false)
+            }}
+          />
+        ))}
+      </Sheet>
 
       <Sheet open={templates} onClose={() => setTemplates(false)}>
         <MenuLabel>Insert a template</MenuLabel>

@@ -263,6 +263,18 @@ export const draftAttachmentSchema = z.object({
 })
 export type DraftAttachment = z.infer<typeof draftAttachmentSchema>
 
+/** A message waiting to be written, started from outside the app: a mailto: link, a file sent with "Mail this", or both. */
+export const composeRequestSchema = z.object({
+  to: z.array(z.string()).max(50),
+  cc: z.array(z.string()).max(50),
+  bcc: z.array(z.string()).max(50),
+  subject: z.string().max(998),
+  /** Plain text, with line breaks as \n. */
+  body: z.string().max(50_000),
+  attachments: z.array(draftAttachmentSchema).max(50)
+})
+export type ComposeRequest = z.infer<typeof composeRequestSchema>
+
 export const draftSchema = z.object({
   /** Set once the draft has been saved locally. */
   id: z.string().optional(),

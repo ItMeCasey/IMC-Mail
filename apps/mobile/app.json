@@ -2,7 +2,7 @@
   "expo": {
     "name": "IMC-Mail",
     "slug": "imc-mail",
-    "version": "2026.10.3",
+    "version": "2026.10.4",
     "scheme": [
       "imcmail",
       "com.itmecasey.imcmail"
@@ -41,7 +41,19 @@
         "android.permission.WAKE_LOCK",
         "android.permission.POST_NOTIFICATIONS"
       ],
-      "allowBackup": false
+      "allowBackup": false,
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "category": ["BROWSABLE", "DEFAULT"],
+          "data": [{ "scheme": "mailto" }]
+        },
+        {
+          "action": "SENDTO",
+          "category": ["DEFAULT"],
+          "data": [{ "scheme": "mailto" }]
+        }
+      ]
     },
     "owner": "itmecasey",
     "extra": {

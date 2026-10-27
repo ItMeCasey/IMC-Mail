@@ -16,6 +16,8 @@ export type Tab = 'mail' | 'calendar' | 'deals' | 'settings'
 export interface ComposeStart {
   to: string
   cc: string
+  /** Blind copies, when the message came from a link that names them. */
+  bcc?: string
   subject: string
   text: string
   inReplyTo: string | null

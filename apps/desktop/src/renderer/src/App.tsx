@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { QueryClientProvider, useQueryClient } from '@tanstack/react-query'
-import { CATEGORY_LABELS, type Draft, type Folder, type MessageAction, type ReplyMode, type UndoMove } from '@imc/core'
+import { CATEGORY_LABELS, type ComposeRequest, type Draft, type Folder, type MessageAction, type ReplyMode, type UndoMove } from '@imc/core'
 import Agenda from './Agenda'
 import DealsBoard from './DealsBoard'
 import ScheduledDialog from './ScheduledDialog'
@@ -15,6 +15,7 @@ import { queryClient } from './queryClient'
 import NotificationSettingsDialog from './NotificationSettings'
 import AddAccount from './AddAccount'
 import Composer, { signatureHtml } from './Composer'
+import { textToHtml } from './textToHtml'
 import DraftsDialog from './DraftsDialog'
 import OutboxToast from './OutboxToast'
 import UndoToast from './UndoToast'
@@ -250,6 +251,14 @@ function Shell() {
 
   const openComposer = (seed: Draft) => setComposer({ key: Date.now(), seed })
 
+  // A message started from outside the app: a mail link that was clicked, or "Mail this" on a file in Explorer.
+  const [incoming, setIncoming] = useState<ComposeRequest | null>(null)
+  useEffect(() => {
+    const take = () => void window.imc.invoke('mailto:take').then((r) => r && setIncoming(r))
+    take()
+    return window.imc.on('mailto:waiting', take)
+  }, [])
+
   const sigFor = (accountId: string) =>
     signatureHtml(accounts.data?.find((a) => a.id === accountId)?.signature ?? '')
 
@@ -267,6 +276,28 @@ function Shell() {
       attachments: []
     })
   }
+
+  useEffect(() => {
+    if (!incoming || !accounts.data) return
+    setIncoming(null)
+    // Like a new message, it is not opened while stream-safe mode hides what is written.
+    if (hide) return blocked()
+    const first = accounts.data.find((a) => a.id === selection.accountId) ?? accounts.data[0]
+    if (!first) return
+    setBoard(false)
+    setCalendar(false)
+    setDraftsOpen(false)
+    openComposer({
+      accountId: first.id,
+      to: incoming.to,
+      cc: incoming.cc,
+      bcc: incoming.bcc,
+      subject: incoming.subject,
+      html: textToHtml(incoming.body) + sigFor(first.id),
+      attachments: incoming.attachments
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incoming, accounts.data])
 
   const reply = async (messageId: string, mode: ReplyMode) => {
     if (hide) return blocked()

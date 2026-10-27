@@ -21,6 +21,7 @@ import { CrashLog } from './crashlog'
 import { Updater } from './updater'
 import { CalendarService } from './calendar'
 import { ComposeService, SmtpMailer } from './compose'
+import { LaunchInbox } from './launch'
 import { MessageService } from './messages'
 import { SnoozeWaker } from './snooze'
 import { TemplateService } from './templates'
@@ -81,8 +82,18 @@ function showMainWindow(): void {
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
-  app.on('second-instance', showMainWindow)
+  app.on('second-instance', (_event, argv) => {
+    showMainWindow()
+    // A mail link was clicked, or "Mail this" was used on a file, while the app was already running.
+    if (launch) launch.handle(argv)
+    else earlyLaunches.push(argv)
+  })
 }
+
+/** Messages started from outside the app (see launch.ts). Set up once the compose service exists. */
+let launch: LaunchInbox | null = null
+/** Launches that arrived before then, this one's own arguments first. */
+const earlyLaunches: string[][] = [process.argv]
 
 const windowState: { maximized: boolean; saved: Electron.Rectangle | null } = { maximized: false, saved: null }
 /** Maximizes, or puts the window back to the size it had. A transparent window is sized by hand. */
@@ -318,6 +329,15 @@ app.whenReady().then(async () => {
     }
   )
   composeService = compose
+  launch = new LaunchInbox({
+    vet: (paths) => compose.vetFiles(paths),
+    ready: () => {
+      showMainWindow()
+      emit('mailto:waiting', {})
+    },
+    fail: (message) => dialog.showErrorBox('IMC-Mail could not attach that file', message)
+  })
+  for (const argv of earlyLaunches.splice(0)) launch.handle(argv)
   calendarSvc = new CalendarService(store, { send: (d, o) => compose.send(d, o) })
   const calendar = calendarSvc
   const templates = new TemplateService(store, join(userData, 'templates'))
@@ -994,6 +1014,7 @@ app.whenReady().then(async () => {
       store.setSignature(id, signature)
     },
     'compose:replyContext': ({ messageId, mode }) => compose.replyContext(messageId, mode),
+    'mailto:take': () => launch?.take() ?? null,
     'compose:attach': async ({ paths }) => {
       if (paths) return compose.attachDropped(paths)
       const pick = await dialog.showOpenDialog({ properties: ['openFile', 'multiSelections'] })

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
-import { AppState, BackHandler, Pressable, StyleSheet, Text, View } from 'react-native'
+import { AppState, BackHandler, Linking, Pressable, StyleSheet, Text, View } from 'react-native'
 import { StatusBar } from 'expo-status-bar'
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context'
-import { navBack, navCanBack, navCanForward, navCurrent, navFilter, navForward, navPush, navStart, type NavHistory } from '@imc/core'
+import { parseMailto, type MailtoDraft, navBack, navCanBack, navCanForward, navCurrent, navFilter, navForward, navPush, navStart, type NavHistory } from '@imc/core'
 import AddAccount from './src/AddAccount'
 import Calendar from './src/Calendar'
 import { loadAccounts, type PhoneAccount } from './src/auth'
@@ -82,6 +82,26 @@ function Shell() {
 
   const tab = (t: Tab) => go({ name: 'tab', tab: t })
 
+  // IMC-Mail is a mail app Android can pick for mail links: clicking one opens a new message with the fields filled in.
+  const [incoming, setIncoming] = useState<MailtoDraft | null>(null)
+  useEffect(() => {
+    const open = (url: string | null | undefined) => {
+      const draft = url ? parseMailto(url) : null
+      if (draft) setIncoming(draft)
+    }
+    void Linking.getInitialURL().then(open)
+    const sub = Linking.addEventListener('url', (e) => open(e.url))
+    return () => sub.remove()
+  }, [])
+  useEffect(() => {
+    // Wait for the accounts to load; with none, there is nothing to send from.
+    if (!incoming || accounts.length === 0) return
+    const account = accounts.find((a) => a.email === mailSel.account) ?? accounts[0]!
+    setIncoming(null)
+    go({ name: 'compose', account, start: { to: incoming.to.join(', '), cc: incoming.cc.join(', '), bcc: incoming.bcc.join(', '), subject: incoming.subject, text: incoming.body, inReplyTo: null, references: [] } })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incoming, accounts])
+
   const added = async (a: PhoneAccount) => {
     await reload()
     setMailSel({ account: a.email, folder: null })
@@ -126,7 +146,7 @@ function Shell() {
         </Screen>
       )}
       {screen.name === 'message' && <MessageView key={`${screen.account.email}:${screen.summary.uid}`} account={screen.account} folder={screen.folder} summary={screen.summary} onBack={back} onCompose={(start) => go({ name: 'compose', account: screen.account, start })} />}
-      {screen.name === 'compose' && <Compose key={nav.index} account={screen.account} {...(screen.start ? { start: screen.start } : {})} onDone={finish} />}
+      {screen.name === 'compose' && <Compose key={nav.index} account={screen.account} accounts={accounts} {...(screen.start ? { start: screen.start } : {})} onDone={finish} />}
       {screen.name === 'addAccount' && <AddAccount onAdded={(a) => void added(a)} onBack={back} />}
       {screen.name === 'devices' && <Devices onBack={back} />}
       {screen.name === 'diagnostics' && (

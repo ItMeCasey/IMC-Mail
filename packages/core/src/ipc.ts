@@ -19,6 +19,7 @@ import {
   undoMoveSchema,
   viewCountsSchema,
   contactSchema,
+  composeRequestSchema,
   draftAttachmentSchema,
   draftSchema,
   draftSummarySchema,
@@ -249,6 +250,8 @@ export const ipcContract = {
     input: z.object({ messageId: z.string(), mode: replyModeSchema }),
     output: replyContextSchema
   },
+  /** A message started from outside the app (a mailto: link or "Mail this" on a file), waiting to be opened. Returns it once. */
+  'mailto:take': { input: z.undefined(), output: composeRequestSchema.nullable() },
   /** Vets files and returns them as attachments; with no paths, shows a file picker. */
   'compose:attach': {
     input: z.object({ paths: z.array(z.string()).max(50).optional() }),
@@ -562,6 +565,8 @@ export const ipcContract = {
 export const ipcEvents = {
   /** Something in the local cache changed for this account. */
   'sync:changed': z.object({ accountId: z.string() }),
+  /** A message started from outside the app is waiting: ask for it with mailto:take. */
+  'mailto:waiting': z.object({}),
   /** The outbox changed: a message was queued, sent, failed, or undone. */
   'outbox:changed': z.object({}),
   'streamsafe:changed': streamSafeStateSchema,
