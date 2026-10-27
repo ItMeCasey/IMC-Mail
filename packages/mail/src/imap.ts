@@ -1,5 +1,5 @@
-import PostalMime from 'postal-mime'
 import type { Connect, MailSocket, Security } from './socket'
+import { parseSummary } from './summary'
 import { asText, decodeMutf7, pairs, parseNode, ResponseReader, type Node, type RawResponse } from './imap-parse'
 
 export interface ImapOptions {
@@ -49,6 +49,8 @@ export interface Summary {
   references: string[]
   /** The Date header, epoch ms, or null if missing or unreadable. */
   date: number | null
+  /** The message's id on a server without stable numbers (POP3's UIDL); the uid is then a number this device made up. */
+  remoteId?: string
 }
 
 export class ImapError extends Error {
@@ -70,7 +72,7 @@ interface Reply {
 interface Pending {
   tag: string
   untagged: RawResponse[]
-  continuation: ((count: number) => string) | undefined
+  continuation: ((count: number) => string | Uint8Array) | undefined
   continuations: number
   done: (r: Reply) => void
   fail: (e: Error) => void
@@ -309,6 +311,36 @@ export class ImapClient {
     if (remove) await this.run(`UID STORE ${set} -FLAGS.SILENT (${remove})`)
   }
 
+  /**
+   * Moves messages to another folder: with MOVE when the server has it, otherwise by copying them and then removing the
+   * originals. The folder they are in must be open for writing (`select(path, false)`).
+   */
+  async move(uids: number[], destination: string): Promise<void> {
+    if (uids.length === 0) return
+    const set = uidSet(uids)
+    if (this.caps.has('MOVE')) {
+      await this.run(`UID MOVE ${set} ${quote(destination)}`)
+      return
+    }
+    await this.run(`UID COPY ${set} ${quote(destination)}`)
+    await this.deleteForever(uids)
+  }
+
+  /** Removes messages from the open folder for good (moving to Trash is what keeps them). */
+  async deleteForever(uids: number[]): Promise<void> {
+    if (uids.length === 0) return
+    const set = uidSet(uids)
+    await this.run(`UID STORE ${set} +FLAGS.SILENT (\\Deleted)`)
+    // UIDPLUS removes just these. Without it every message marked deleted in the folder goes.
+    await this.run(this.caps.has('UIDPLUS') ? `UID EXPUNGE ${set}` : 'EXPUNGE')
+  }
+
+  /** Saves a message in a folder (a copy in Sent, say). */
+  async append(folder: string, raw: Uint8Array, flags: string[] = ['\\Seen']): Promise<void> {
+    const clean = flags.filter((f) => /^\\?[A-Za-z0-9$_-]+$/.test(f)).join(' ')
+    await this.run(`APPEND ${quote(folder)}${clean ? ` (${clean})` : ''} {${raw.length}}`, { continuation: () => raw })
+  }
+
   async logout(): Promise<void> {
     try {
       await this.run('LOGOUT')
@@ -332,23 +364,15 @@ export class ImapClient {
   }
 
   private async summary(f: Map<string, Node>, header: string): Promise<Summary> {
-    const mail = await PostalMime.parse(`${header.replace(/\r?\n$/, '')}\r\n\r\n`)
-    const addr = (a: { name?: string; address?: string }) => ({ name: a.name ?? '', address: a.address ?? '' })
-    const when = mail.date ? Date.parse(mail.date) : NaN
-    return {
-      uid: Number(asText(f.get('UID'))),
-      flags: this.flagList(f.get('FLAGS')),
-      internalDate: asText(f.get('INTERNALDATE')) || null,
-      size: Number(asText(f.get('RFC822.SIZE'))) || 0,
-      from: mail.from?.address ? addr(mail.from) : null,
-      to: (mail.to ?? []).filter((a) => a.address).map(addr),
-      cc: (mail.cc ?? []).filter((a) => a.address).map(addr),
-      subject: mail.subject ?? '',
-      messageId: mail.messageId ?? null,
-      inReplyTo: mail.inReplyTo ?? null,
-      references: (mail.references ?? '').split(/\s+/).filter(Boolean),
-      date: Number.isNaN(when) ? null : when
-    }
+    return parseSummary(
+      {
+        uid: Number(asText(f.get('UID'))),
+        flags: this.flagList(f.get('FLAGS')),
+        internalDate: asText(f.get('INTERNALDATE')) || null,
+        size: Number(asText(f.get('RFC822.SIZE'))) || 0
+      },
+      header
+    )
   }
 
   private noteCapabilities(line: string): void {
@@ -359,13 +383,13 @@ export class ImapClient {
   // ---- the command loop -------------------------------------------------------------------------------
 
   /** Sends one command and waits for its verdict. Commands go one at a time, in order. */
-  private run(command: string, opts: { continuation?: (count: number) => string } = {}): Promise<Reply> {
+  private run(command: string, opts: { continuation?: (count: number) => string | Uint8Array } = {}): Promise<Reply> {
     const job = this.chain.then(() => this.exchange(command, opts))
     this.chain = job.catch(() => undefined)
     return job
   }
 
-  private exchange(command: string, opts: { continuation?: (count: number) => string }): Promise<Reply> {
+  private exchange(command: string, opts: { continuation?: (count: number) => string | Uint8Array }): Promise<Reply> {
     if (this.closed) return Promise.reject(this.closed)
     const socket = this.socket
     if (!socket) return Promise.reject(new ImapError('Not connected', 'closed'))
@@ -407,7 +431,14 @@ export class ImapClient {
     if (!p) return
     if (r.text.startsWith('+')) {
       const line = p.continuation?.(p.continuations++) ?? ''
-      this.socket?.write(enc.encode(`${line}\r\n`))
+      if (typeof line === 'string') this.socket?.write(enc.encode(`${line}\r\n`))
+      else {
+        // Bytes (a message being saved), followed by the line end that finishes the command.
+        const out = new Uint8Array(line.length + 2)
+        out.set(line)
+        out.set([13, 10], line.length)
+        this.socket?.write(out)
+      }
       return
     }
     if (r.text.startsWith(`${p.tag} `)) {

@@ -87,3 +87,18 @@ export async function parseMessage(raw: Uint8Array): Promise<ParsedMessage> {
     }))
   }
 }
+
+export interface AttachmentContent {
+  filename: string
+  mimeType: string
+  content: Uint8Array
+}
+
+/** The bytes of one attachment of a message (by its place in `parseMessage(...).attachments`), or null if there is no such one. */
+export async function extractAttachment(raw: Uint8Array, index: number): Promise<AttachmentContent | null> {
+  const mail = await PostalMime.parse(raw)
+  const a = mail.attachments?.[index]
+  if (!a) return null
+  const content = typeof a.content === 'string' ? new TextEncoder().encode(a.content) : new Uint8Array(a.content)
+  return { filename: a.filename ?? '(unnamed)', mimeType: a.mimeType ?? 'application/octet-stream', content }
+}

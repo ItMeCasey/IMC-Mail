@@ -8,18 +8,23 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./render": "./src/render.ts"
+    "./render": "./src/render.ts",
+    "./test-db": "./src/test-db.ts",
+    "./holidays": "./src/holidays.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
+    "@imc/core": "workspace:*",
+    "date-holidays": "^3.38.0",
     "postal-mime": "^4.1.4",
     "sanitize-html": "^2.18.1"
   },
   "devDependencies": {
     "vitest": "^5.0.5",
-    "@types/sanitize-html": "^2.16.2"
+    "@types/sanitize-html": "^2.16.2",
+    "@types/node": "^26.6.5"
   }
 }

@@ -45,6 +45,7 @@ export class FakeServer {
   private authed = false
   private sock: { push: (b: Uint8Array) => void; close: () => void } | null = null
   private waitingForSasl: { tag: string } | null = null
+  private appending: { tag: string; path: string; flags: string[]; n: number } | null = null
   private inbound = ''
 
   constructor(readonly o: FakeOptions = {}) {}
@@ -98,6 +99,19 @@ export class FakeServer {
 
   private input(s: string): void {
     this.inbound += s
+    if (this.appending) {
+      const a = this.appending
+      if (enc.encode(this.inbound).length < a.n + 2) return
+      const raw = this.inbound.slice(0, a.n)
+      this.inbound = this.inbound.slice(a.n + 2)
+      this.appending = null
+      const folder = this.o.folders?.find((x) => x.path === a.path)
+      if (!folder) return this.say(`${a.tag} NO [TRYCREATE] no such mailbox\r\n`)
+      folder.messages ??= []
+      const uid = Math.max(0, ...folder.messages.map((x) => x.uid)) + 1
+      folder.messages.push({ uid, flags: a.flags, raw })
+      this.say(`${a.tag} OK [APPENDUID ${folder.uidValidity ?? 1} ${uid}] done\r\n`)
+    }
     for (;;) {
       const end = this.inbound.indexOf('\r\n')
       if (end < 0) return
@@ -157,6 +171,18 @@ export class FakeServer {
       }
       case 'UID':
         return this.uid(tag!, args)
+      case 'EXPUNGE': {
+        const f = this.selected
+        if (!f) return this.say(`${tag} NO select a mailbox first\r\n`)
+        f.messages = (f.messages ?? []).filter((x) => !(x.flags ?? []).includes('\\Deleted'))
+        return this.say(`${tag} OK done\r\n`)
+      }
+      case 'APPEND': {
+        const m = /^"((?:[^"\\]|\\.)*)"(?: \(([^)]*)\))?(?: "[^"]*")? \{(\d+)\+?\}$/.exec(args)
+        if (!m || !this.authed) return this.say(`${tag} BAD cannot append\r\n`)
+        this.appending = { tag: tag!, path: m[1]!.replace(/\\(.)/g, '$1'), flags: (m[2] ?? '').split(' ').filter(Boolean), n: Number(m[3]) }
+        return this.say('+ ready for literal data\r\n')
+      }
       case 'LOGOUT':
         this.say(`* BYE bye\r\n${tag} OK logged out\r\n`)
         return
@@ -193,6 +219,22 @@ export class FakeServer {
     const msgs = f.messages ?? []
     const search = /^SEARCH (.*)$/i.exec(args)
     if (search) return this.say(`* SEARCH ${msgs.map((m) => m.uid).join(' ')}\r\n${tag} OK done\r\n`)
+    const mv = /^(MOVE|COPY) (\S+) "((?:[^"\\]|\\.)*)"$/i.exec(args)
+    if (mv) {
+      const dest = this.o.folders?.find((x) => x.path === mv[3]!.replace(/\\(.)/g, '$1'))
+      if (!dest) return this.say(`${tag} NO [TRYCREATE] no such mailbox\r\n`)
+      const picked = this.pick(msgs, mv[2]!)
+      dest.messages ??= []
+      for (const m of picked) dest.messages.push({ ...m, uid: Math.max(0, ...dest.messages.map((x) => x.uid)) + 1, flags: [...(m.flags ?? [])] })
+      if (mv[1]!.toUpperCase() === 'MOVE') f.messages = msgs.filter((x) => !picked.includes(x))
+      return this.say(`${tag} OK done\r\n`)
+    }
+    const ex = /^EXPUNGE (\S+)$/i.exec(args)
+    if (ex) {
+      const set = new Set(this.pick(msgs, ex[1]!))
+      f.messages = msgs.filter((x) => !(set.has(x) && (x.flags ?? []).includes('\\Deleted')))
+      return this.say(`${tag} OK done\r\n`)
+    }
     const store = /^STORE (\S+) ([+-])FLAGS\.SILENT \(([^)]*)\)$/i.exec(args)
     if (store) {
       for (const m of this.pick(msgs, store[1]!)) {

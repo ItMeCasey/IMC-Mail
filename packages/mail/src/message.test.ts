@@ -109,3 +109,46 @@ describe('fetching part of a message', () => {
     expect((await c.fetchRaw(1)).length).toBe(raw.length)
   })
 })
+
+describe('extractAttachment', () => {
+  const sample = bytes(
+    crlf([
+      'From: a@b.example',
+      'Subject: Files',
+      'MIME-Version: 1.0',
+      'Content-Type: multipart/mixed; boundary="M"',
+      '',
+      '--M',
+      'Content-Type: text/plain',
+      '',
+      'see attached',
+      '--M',
+      'Content-Type: application/pdf; name="rates.pdf"',
+      'Content-Disposition: attachment; filename="rates.pdf"',
+      'Content-Transfer-Encoding: base64',
+      '',
+      'SGVsbG8gd29ybGQ=',
+      '--M',
+      'Content-Type: text/csv; name="a.csv"',
+      'Content-Disposition: attachment; filename="a.csv"',
+      '',
+      'x,y\r\n1,2',
+      '--M--',
+      ''
+    ])
+  )
+
+  it('returns the exact bytes of the attachment asked for', async () => {
+    const { extractAttachment } = await import('./message')
+    const pdf = await extractAttachment(sample, 0)
+    expect(pdf).toMatchObject({ filename: 'rates.pdf', mimeType: 'application/pdf' })
+    expect(new TextDecoder().decode(pdf!.content)).toBe('Hello world')
+    expect((await extractAttachment(sample, 1))!.filename).toBe('a.csv')
+  })
+
+  it('returns null when there is no such attachment', async () => {
+    const { extractAttachment } = await import('./message')
+    expect(await extractAttachment(sample, 5)).toBeNull()
+    expect(await extractAttachment(bytes('Subject: none\r\n\r\nhi'), 0)).toBeNull()
+  })
+})

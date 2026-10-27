@@ -3,6 +3,7 @@ import { install } from 'react-native-quick-crypto'
 
 install()
 
+import './src/background'
 import { registerRootComponent } from 'expo'
 import App from './App'
 

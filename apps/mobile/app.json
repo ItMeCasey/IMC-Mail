@@ -15,7 +15,22 @@
       "react-native-quick-crypto",
       "expo-web-browser",
       "expo-secure-store",
-      "expo-sqlite"
+      "expo-sqlite",
+      "expo-background-task",
+      "expo-sharing",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "IMC-Mail uses the camera only to scan the pairing code shown on your computer.",
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#2b6cb0"
+        }
+      ]
     ],
     "android": {
       "package": "com.itmecasey.imcmail",
