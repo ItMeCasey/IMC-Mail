@@ -6,7 +6,7 @@ settings:
 
 patchedDependencies:
   postal-mime: 092d0db189022ac0ea16bd04aad0c8a4899775810e0a0e3c6781f07d1b74ca63
-  react-native-tcp-socket: 99e3207657d7428e16a55f23d91991b6d49a6dc7d362b9e95a09e4184c1c0379
+  react-native-tcp-socket: 8bd4603cad4ada1b3eeeb3b4a7413a496927c343afb0acdec39f53037bf78963
 
 importers:
 
@@ -225,7 +225,7 @@ importers:
         version: 5.10.1(react-native@0.88.0(@babel/core@7.29.7(supports-color@7.2.0))(@types/react@19.3.0)(react@19.3.0)(supports-color@7.2.0))(react@19.3.0)
       react-native-tcp-socket:
         specifier: ^6.4.3
-        version: 6.4.3(patch_hash=99e3207657d7428e16a55f23d91991b6d49a6dc7d362b9e95a09e4184c1c0379)(react-native@0.88.0(@babel/core@7.29.7(supports-color@7.2.0))(@types/react@19.3.0)(react@19.3.0)(supports-color@7.2.0))
+        version: 6.4.3(patch_hash=8bd4603cad4ada1b3eeeb3b4a7413a496927c343afb0acdec39f53037bf78963)(react-native@0.88.0(@babel/core@7.29.7(supports-color@7.2.0))(@types/react@19.3.0)(react@19.3.0)(supports-color@7.2.0))
       react-native-webview:
         specifier: 14.0.1
         version: 14.0.1(react-native@0.88.0(@babel/core@7.29.7(supports-color@7.2.0))(@types/react@19.3.0)(react@19.3.0)(supports-color@7.2.0))(react@19.3.0)
@@ -8709,7 +8709,7 @@ snapshots:
       react: 19.3.0
       react-native: 0.88.0(@babel/core@7.29.7(supports-color@7.2.0))(@types/react@19.3.0)(react@19.3.0)(supports-color@7.2.0)
 
-  react-native-tcp-socket@6.4.3(patch_hash=99e3207657d7428e16a55f23d91991b6d49a6dc7d362b9e95a09e4184c1c0379)(react-native@0.88.0(@babel/core@7.29.7(supports-color@7.2.0))(@types/react@19.3.0)(react@19.3.0)(supports-color@7.2.0)):
+  react-native-tcp-socket@6.4.3(patch_hash=8bd4603cad4ada1b3eeeb3b4a7413a496927c343afb0acdec39f53037bf78963)(react-native@0.88.0(@babel/core@7.29.7(supports-color@7.2.0))(@types/react@19.3.0)(react@19.3.0)(supports-color@7.2.0)):
     dependencies:
       buffer: 5.7.1
       eventemitter3: 4.0.7

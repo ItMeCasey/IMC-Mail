@@ -86,7 +86,9 @@ export default function MessageView({ account, folder, summary, onBack, onCompos
   }
 
   const reply = (mode: ReplyMode) => {
-    const d = startDraft({ from: summary.from, to: summary.to, cc: summary.cc, subject: summary.subject, messageId: summary.messageId, references: summary.references, date: summary.date, text: m?.text ?? '' }, mode, account.email)
+    // The quoted text comes from the message body, so wait until it has been read.
+    if (!m) return setError('Wait for the message to finish loading, then try again.')
+    const d = startDraft({ from: summary.from, to: summary.to, cc: summary.cc, subject: summary.subject, messageId: summary.messageId, references: summary.references, date: summary.date, text: m.text }, mode, account.email)
     onCompose({ to: addressText(d.to), cc: addressText(d.cc), subject: d.subject, text: d.text, inReplyTo: d.inReplyTo, references: d.references })
   }
 

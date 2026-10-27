@@ -21,6 +21,7 @@ import {
 } from '@imc/mail'
 import { credentials, serversOf, type PhoneAccount } from './auth'
 import { bodies, cache, folders as folderCache, queue } from './db'
+import { tell } from './report'
 import { tcpConnect } from './tcp'
 
 // Everything the phone does with a mail account: connect, list and save folders, read, act on, send and download.
@@ -236,7 +237,9 @@ export async function sendMail(account: PhoneAccount, message: Omit<Outgoing, 'f
   const recipients = recipientsOf(message)
   try {
     await deliver(account, account.email, recipients, raw)
+    void tell({ send: account.provider, outcome: 'accepted', recipients: recipients.length })
   } catch (e) {
+    void tell({ send: account.provider, outcome: 'failed', message: e instanceof Error ? e.message : String(e) })
     if (!isNetworkFailure(e)) throw e
     queue.add({ id: messageId, account: account.email, sender: account.email, recipients, raw, subject: message.subject, createdAt: Date.now() })
     return 'queued'
