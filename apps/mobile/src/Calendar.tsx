@@ -269,9 +269,12 @@ function TimeGrid({ days, byDay, holidayBy, today, tone, single, refreshing, onR
                         onPress={() => onPick(o)}
                         style={[st.block, { top, height: height - 1, left: p.lane * w, width: w - 2, backgroundColor: tone(o.account) + '40', borderLeftColor: tone(o.account) }]}
                       >
-                        <Text numberOfLines={single ? 2 : 3} style={st.blockTitle}>
-                          {o.summary || 'Meeting'}
-                        </Text>
+                        {/* A block too narrow to read is left as a colored bar; tap it for the details. */}
+                        {w >= 34 && (
+                          <Text numberOfLines={single ? 2 : 3} style={st.blockTitle}>
+                            {o.summary || 'Meeting'}
+                          </Text>
+                        )}
                         {single && height > 40 && (
                           <Text numberOfLines={1} style={st.blockTime}>
                             {clock.format(o.start)} – {clock.format(o.end)}
