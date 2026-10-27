@@ -186,6 +186,54 @@ function Holidays() {
   )
 }
 
+const LEADS = [5, 10, 15, 30, 60]
+
+/** Windows notifications before meetings and on holidays. They follow the quiet hours and stream-safe choices in Notifications. */
+function Reminders() {
+  const qc = useQueryClient()
+  const prefs = useQuery({ queryKey: ['prefs'], queryFn: () => window.imc.invoke('app:prefs') })
+  const p = prefs.data
+  const save = (patch: { meetingReminders?: boolean; reminderLeadMinutes?: number; holidayReminders?: boolean }) =>
+    void window.imc.invoke('app:setPrefs', patch).then(() => qc.invalidateQueries({ queryKey: ['prefs'] }))
+  const lead = p?.reminderLeadMinutes ?? 10
+  const leads = LEADS.includes(lead) ? LEADS : [...LEADS, lead].sort((a, b) => a - b)
+
+  return (
+    <Section title="Reminders">
+      <label className="flex items-start gap-2 text-sm">
+        <input type="checkbox" className="mt-0.5" checked={p?.meetingReminders ?? true} onChange={(e) => save({ meetingReminders: e.target.checked })} />
+        <span>
+          Remind me before meetings
+          <span className="block text-xs text-ink-3">A Windows notification, even while IMC-Mail is in the tray. Click it to open the calendar.</span>
+        </span>
+      </label>
+      <label className="block text-sm text-ink-2">
+        How long before
+        <select
+          disabled={!(p?.meetingReminders ?? true)}
+          value={lead}
+          onChange={(e) => save({ reminderLeadMinutes: Number(e.target.value) })}
+          className="mt-1 block h-9 w-full rounded-md border border-line-strong bg-sheet px-2.5 text-ink disabled:opacity-50"
+        >
+          {leads.map((m) => (
+            <option key={m} value={m}>
+              {m === 60 ? '1 hour' : `${m} minutes`}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="flex items-start gap-2 text-sm">
+        <input type="checkbox" className="mt-0.5" checked={p?.holidayReminders ?? false} onChange={(e) => save({ holidayReminders: e.target.checked })} />
+        <span>
+          Remind me on holidays
+          <span className="block text-xs text-ink-3">One notification on the day, for the country chosen above.</span>
+        </span>
+      </label>
+      <p className="text-xs text-ink-3">Reminders stay quiet during quiet hours, and follow the stream-safe choice, set under Mail &gt; Notifications.</p>
+    </Section>
+  )
+}
+
 /** Everything that is a setting rather than mail, in one window of its own. */
 export default function SettingsWindow() {
   const streamSafe = useStreamSafe()
@@ -367,6 +415,7 @@ export default function SettingsWindow() {
           {current === 'calendar' && (
             <>
               <Holidays />
+              <Reminders />
               <CalendarSources hide={streamSafe.active} />
             </>
           )}

@@ -449,11 +449,15 @@ export const ipcContract = {
       closeToTray: z.boolean(),
       streamerFeatures: z.boolean(),
       showHolidays: z.boolean(),
-      holidayCountry: z.string()
+      holidayCountry: z.string(),
+      meetingReminders: z.boolean(),
+      reminderLeadMinutes: z.number(),
+      holidayReminders: z.boolean()
     })
   },
   /**
    * `streamerFeatures` off hides stream-safe mode, the sponsorship board and mail categories: a plain mail client.
+   * `meetingReminders` and `holidayReminders` show Windows toasts, a meeting one `reminderLeadMinutes` ahead.
    * `showHolidays` puts the public holidays of `holidayCountry` (an ISO 3166 code such as US or GB) in the calendar.
    */
   'app:setPrefs': {
@@ -461,7 +465,10 @@ export const ipcContract = {
       closeToTray: z.boolean().optional(),
       streamerFeatures: z.boolean().optional(),
       showHolidays: z.boolean().optional(),
-      holidayCountry: z.string().regex(/^[A-Z]{2}$/).optional()
+      holidayCountry: z.string().regex(/^[A-Z]{2}$/).optional(),
+      meetingReminders: z.boolean().optional(),
+      reminderLeadMinutes: z.number().int().min(1).max(120).optional(),
+      holidayReminders: z.boolean().optional()
     }),
     output: z.undefined()
   },
@@ -518,6 +525,8 @@ export const ipcEvents = {
   'update:changed': updateStatusSchema,
   /** A notification was clicked: open this message. */
   'notification:open': z.object({ messageId: z.string() }),
+  /** A reminder was clicked: open the calendar. */
+  'notification:calendar': z.object({}),
   /** The settings window wants the main window to open a dialog. */
   'settings:action': settingsActionSchema
 } as const

@@ -27,6 +27,7 @@ import { DEFAULT_NOTIFICATIONS, Notifier } from './notifications'
 import { loadOAuthConfig, signIn, TokenProvider } from './oauth'
 import { CalendarSync } from './calendar-sync'
 import { defaultHolidayCountry, holidayCountries, holidaysBetween } from './holidays'
+import { ReminderService } from './reminders'
 import { safeStorageSecrets } from './secrets'
 import { MailStore, type AccountRow } from './store'
 import { testConnection } from './sync/engine'
@@ -55,6 +56,9 @@ let closeToTray = false
 let streamerFeatures = true
 let showHolidays = false
 let holidayCountry = 'US'
+let meetingReminders = true
+let reminderLeadMinutes = 10
+let holidayReminders = false
 let quitting = false
 let tray: Tray | null = null
 let updater: Updater | null = null
@@ -343,6 +347,10 @@ app.whenReady().then(async () => {
   streamerFeatures = readSettings()['streamerFeatures'] !== false
   showHolidays = readSettings()['showHolidays'] === true
   const savedCountry = readSettings()['holidayCountry']
+  meetingReminders = readSettings()['meetingReminders'] !== false
+  const savedLead = readSettings()['reminderLeadMinutes']
+  reminderLeadMinutes = typeof savedLead === 'number' && savedLead >= 1 && savedLead <= 120 ? Math.round(savedLead) : 10
+  holidayReminders = readSettings()['holidayReminders'] === true
   holidayCountry = typeof savedCountry === 'string' && /^[A-Z]{2}$/.test(savedCountry) ? savedCountry : defaultHolidayCountry(app.getLocale())
   if (!streamerFeatures) streamSafe.setEnabled(false)
   streamSafe.start()
@@ -364,7 +372,7 @@ app.whenReady().then(async () => {
     ...DEFAULT_NOTIFICATIONS,
     ...((readSettings()['notifications'] as Partial<NotificationSettings> | undefined) ?? {})
   }
-  const showToast = (t: { title: string; body: string; messageId: string | null }) => {
+  const showToast = (t: { title: string; body: string; messageId: string | null; calendar?: boolean }) => {
     if (!Notification.isSupported()) return
     const n = new Notification({ title: t.title, body: t.body })
     n.on('click', () => {
@@ -375,6 +383,7 @@ app.whenReady().then(async () => {
         win.focus()
       }
       if (t.messageId) emit('notification:open', { messageId: t.messageId })
+      else if (t.calendar) emit('notification:calendar', {})
     })
     n.show()
   }
@@ -404,6 +413,25 @@ app.whenReady().then(async () => {
     show: showToast
   })
   snoozeWaker.start()
+  // Reminders for meetings about to start and for public holidays, as Windows toasts that open the calendar.
+  const reminders = new ReminderService({
+    prefs: () => ({ meetings: meetingReminders, leadMinutes: reminderLeadMinutes, holidays: holidayReminders }),
+    notifications: () => notificationSettings,
+    streamActive: () => streamSafe?.state.active ?? true,
+    meetings: (from, to) => calendar.list(from, to),
+    holidaysOn: (day) => {
+      const start = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime()
+      return holidaysBetween(holidayCountry, start, start + 86_400_000).map((h) => h.name)
+    },
+    lastHolidayDay: () => {
+      const v = readSettings()['holidayNotifiedOn']
+      return typeof v === 'string' ? v : null
+    },
+    saveHolidayDay: (key) => writeFileSync(settingsFile, JSON.stringify({ ...readSettings(), holidayNotifiedOn: key }, null, 2)),
+    show: (t) => showToast({ ...t, messageId: null, calendar: true })
+  })
+  reminders.start()
+  app.on('will-quit', () => reminders.stop())
   // Follow-up reminders: shown once when due, dropped quietly if someone replied.
   const followUpTimer = setInterval(() => {
     const ids = store.followUpTick(Date.now())
@@ -817,13 +845,19 @@ app.whenReady().then(async () => {
     'update:install': () => {
       updater?.install()
     },
-    'app:prefs': () => ({ closeToTray, streamerFeatures, showHolidays, holidayCountry }),
+    'app:prefs': () => ({ closeToTray, streamerFeatures, showHolidays, holidayCountry, meetingReminders, reminderLeadMinutes, holidayReminders }),
     'app:setPrefs': (p) => {
       if (p.closeToTray !== undefined) closeToTray = p.closeToTray
       if (p.streamerFeatures !== undefined) applyStreamerFeatures(p.streamerFeatures)
       if (p.showHolidays !== undefined) showHolidays = p.showHolidays
       if (p.holidayCountry !== undefined) holidayCountry = p.holidayCountry
-      writeFileSync(settingsFile, JSON.stringify({ ...readSettings(), closeToTray, streamerFeatures, showHolidays, holidayCountry }, null, 2))
+      if (p.meetingReminders !== undefined) meetingReminders = p.meetingReminders
+      if (p.reminderLeadMinutes !== undefined) reminderLeadMinutes = p.reminderLeadMinutes
+      if (p.holidayReminders !== undefined) holidayReminders = p.holidayReminders
+      writeFileSync(
+        settingsFile,
+        JSON.stringify({ ...readSettings(), closeToTray, streamerFeatures, showHolidays, holidayCountry, meetingReminders, reminderLeadMinutes, holidayReminders }, null, 2)
+      )
     },
     'calendar:holidays': ({ from, to }) => (showHolidays && to > from ? holidaysBetween(holidayCountry, from, Math.min(to, from + 400 * 86_400_000)) : []),
     'calendar:holidayCountries': () => holidayCountries(),

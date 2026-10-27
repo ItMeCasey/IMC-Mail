@@ -30,7 +30,7 @@ describe('ipcContract', () => {
     expect(input.safeParse({ closeToTray: true }).success).toBe(true)
     expect(input.safeParse({ streamerFeatures: 'no' }).success).toBe(false)
     expect(output.safeParse(undefined).success).toBe(true)
-    expect(ipcContract['app:prefs'].output.safeParse({ closeToTray: false, streamerFeatures: true, showHolidays: false, holidayCountry: 'US' }).success).toBe(true)
+    expect(ipcContract['app:prefs'].output.safeParse({ closeToTray: false, streamerFeatures: true, showHolidays: false, holidayCountry: 'US', meetingReminders: true, reminderLeadMinutes: 10, holidayReminders: false }).success).toBe(true)
   })
 
   it('takes a two-letter country code for holidays', () => {

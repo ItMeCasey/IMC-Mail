@@ -128,6 +128,17 @@ function Shell() {
     []
   )
 
+  // A meeting or holiday reminder was clicked: show the calendar.
+  useEffect(
+    () =>
+      window.imc.on('notification:calendar', () => {
+        setBoard(false)
+        setComposer(null)
+        setCalendar(true)
+      }),
+    []
+  )
+
   // If the app logged an error since it last asked, offer to report it (once; "Not now" stops the asking).
   useEffect(() => {
     let cancelled = false
