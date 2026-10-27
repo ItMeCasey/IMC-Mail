@@ -51,11 +51,14 @@ describe('signing in', () => {
     expect((await call('GET', '/api/overview')).status).toBe(200)
   })
 
-  it('slows down someone trying many tokens', async () => {
-    for (let i = 0; i < 20; i++) await call('GET', '/api/overview', undefined, `wrong-${i}`, '5.5.5.5')
-    expect((await call('GET', '/api/overview', undefined, TOKEN, '5.5.5.5')).status).toBe(429)
-    // Someone else is not affected.
-    expect((await call('GET', '/api/overview', undefined, TOKEN, '6.6.6.6')).status).toBe(200)
+  it('slows down someone trying many wrong tokens, but never the right one', async () => {
+    for (let i = 0; i < 20; i++) expect((await call('GET', '/api/overview', undefined, `wrong-${i}`, '5.5.5.5')).status).toBe(401)
+    expect((await call('GET', '/api/overview', undefined, 'one-more-wrong', '5.5.5.5')).status).toBe(429)
+    expect((await call('GET', '/api/overview', undefined, TOKEN, '5.5.5.5')).status).toBe(200)
+  })
+
+  it('lets the dashboard call as often as it likes with the right token', async () => {
+    for (let i = 0; i < 200; i++) expect((await call('GET', '/api/overview')).status).toBe(200)
   })
 
   it('leaves out of the page anything that could run text from the server as script', () => {

@@ -64,10 +64,11 @@ export async function handleAdmin(req: AdminReq, deps: AdminDeps): Promise<Admin
   if (path === '/' || path === '/index.html') return method === 'GET' ? { status: 200, html: ADMIN_PAGE } : fail(405, 'Method not allowed')
   if (!path.startsWith('/api/')) return fail(404, 'Not found')
 
-  // Wrong tokens are limited, so the token cannot be guessed by trying.
-  if (!deps.limiter.take('admin-try', req.ip, 20, 60_000)) return fail(429, 'Too many tries')
   const given = /^Bearer (.+)$/.exec(req.authorization ?? '')?.[1] ?? ''
   if (!given || !sameText(given, deps.token)) {
+    // Only wrong or missing tokens count against the limit (the page itself calls often with the right one), so the
+    // token cannot be guessed by trying.
+    if (!deps.limiter.take('admin-try', req.ip, 20, 60_000)) return fail(429, 'Too many tries. Wait a minute.')
     deps.metrics.event('admin sign-in refused', req.ip)
     return fail(401, 'Not signed in')
   }
