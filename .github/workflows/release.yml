@@ -1,0 +1,87 @@
+name: Build the desktop app
+
+# Pushing a version tag (v2026.10.5, say) builds the Windows installer here and attaches it to that tag's GitHub release,
+# along with the two files the app's update check reads. Run it by hand from the Actions tab to rebuild a tag, or to
+# try a build without touching any release.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build (for example v2026.10.4)'
+        required: true
+      publish:
+        description: 'Attach the result to that tag''s release (leave off to only keep it as a download of this run)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.15.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: The tag matches the app's version
+        shell: bash
+        run: |
+          version=$(node -p "require('./apps/desktop/package.json').version")
+          if [ "v$version" != "$TAG" ]; then
+            echo "Tag $TAG does not match the version in apps/desktop/package.json ($version). Bump the version first (pnpm version:set), commit, then tag."
+            exit 1
+          fi
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Type check and test
+        run: |
+          pnpm typecheck
+          pnpm test
+
+      - name: Build the installer
+        run: pnpm --filter @imc/desktop package --publish never
+
+      - name: Keep the installer as a download of this run
+        uses: actions/upload-artifact@v4
+        with:
+          name: IMC-Mail-windows
+          path: |
+            apps/desktop/dist/IMC-Mail-Setup-*.exe
+            apps/desktop/dist/IMC-Mail-Setup-*.exe.blockmap
+            apps/desktop/dist/latest.yml
+          if-no-files-found: error
+
+      - name: Attach it to the release
+        if: github.event_name == 'push' || github.event.inputs.publish == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="${TAG#v}"
+          files=("apps/desktop/dist/IMC-Mail-Setup-$version.exe" "apps/desktop/dist/IMC-Mail-Setup-$version.exe.blockmap" "apps/desktop/dist/latest.yml")
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${files[@]}" --clobber
+          else
+            gh release create "$TAG" "${files[@]}" --verify-tag --title "IMC-Mail $version" --generate-notes
+          fi
