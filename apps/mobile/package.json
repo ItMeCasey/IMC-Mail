@@ -1,6 +1,6 @@
 {
   "name": "@imc/mobile",
-  "version": "2026.10.2",
+  "version": "2026.10.3",
   "private": true,
   "main": "index.ts",
   "description": "IMC-Mail for Android (React Native with Expo)",
