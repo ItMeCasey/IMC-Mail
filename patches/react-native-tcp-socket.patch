@@ -1,0 +1,74 @@
+diff --git a/android/src/main/java/com/asterinet/react/tcpsocket/TcpSocketClient.java b/android/src/main/java/com/asterinet/react/tcpsocket/TcpSocketClient.java
+index 75115700e46138a43b5c63c36bee88016bd6129e..7726790360b4f7865722860caa5936be633fcfb9 100644
+--- a/android/src/main/java/com/asterinet/react/tcpsocket/TcpSocketClient.java
++++ b/android/src/main/java/com/asterinet/react/tcpsocket/TcpSocketClient.java
+@@ -13,9 +13,14 @@ import java.net.InetSocketAddress;
+ import java.net.Socket;
+ import java.security.GeneralSecurityException;
+ import java.util.Arrays;
++import java.util.Collections;
+ import java.util.concurrent.ExecutorService;
+ import java.util.concurrent.Executors;
+ 
++import javax.net.ssl.HttpsURLConnection;
++import javax.net.ssl.SNIHostName;
++import javax.net.ssl.SSLParameters;
++import javax.net.ssl.SSLPeerUnverifiedException;
+ import javax.net.ssl.SSLSocket;
+ import javax.net.ssl.SSLSocketFactory;
+ 
+@@ -45,6 +50,14 @@ class TcpSocketClient extends TcpSocket {
+             SSLSocketFactory ssf = getSSLSocketFactory(context, tlsOptions);
+             socket = ssf.createSocket();
+             ((SSLSocket) socket).setUseClientMode(true);
++            // IMC patch: tell the server which host we want (SNI). Without it many servers send the wrong certificate.
++            try {
++                SSLParameters params = ((SSLSocket) socket).getSSLParameters();
++                params.setServerNames(Collections.singletonList(new SNIHostName(address)));
++                ((SSLSocket) socket).setSSLParameters(params);
++            } catch (IllegalArgumentException ignored) {
++                // An IP address is not a host name for SNI; the hostname check below still applies.
++            }
+         } else {
+             socket = new Socket();
+         }
+@@ -67,16 +80,37 @@ class TcpSocketClient extends TcpSocket {
+         socket.bind(new InetSocketAddress(localInetAddress, localPort));
+         final int connectTimeout = options.hasKey("connectTimeout") ? options.getInt("connectTimeout") : 0; 
+         socket.connect(new InetSocketAddress(remoteInetAddress, port), connectTimeout);
+-        if (socket instanceof SSLSocket) ((SSLSocket) socket).startHandshake();
++        if (socket instanceof SSLSocket) {
++            ((SSLSocket) socket).startHandshake();
++            verifyHostname((SSLSocket) socket, address);
++        }
+         startListening();
+     }
+ 
++    /**
++     * IMC patch: Android checks that a certificate is signed by a trusted authority but, on a plain
++     * SSLSocket, not that it belongs to the host we meant to reach. Without this check anyone holding a
++     * valid certificate for any domain could sit in the middle. Fail the connection unless it matches.
++     */
++    private static void verifyHostname(SSLSocket sslSocket, String host) throws IOException {
++        if (!HttpsURLConnection.getDefaultHostnameVerifier().verify(host, sslSocket.getSession())) {
++            try {
++                sslSocket.close();
++            } catch (IOException ignored) {
++            }
++            throw new SSLPeerUnverifiedException("The certificate is not valid for " + host);
++        }
++    }
++
+     public void startTLS(Context context, ReadableMap tlsOptions) throws IOException, GeneralSecurityException {
+         if (socket instanceof SSLSocket) return;
+         SSLSocketFactory ssf = getSSLSocketFactory(context, tlsOptions);
+-        SSLSocket sslSocket = (SSLSocket) ssf.createSocket(socket, socket.getInetAddress().getHostAddress(), socket.getPort(), true);
++        // IMC patch: use the host name the connection was opened with (not its IP address) for SNI and for the certificate check.
++        String host = socket.getInetAddress().getHostName();
++        SSLSocket sslSocket = (SSLSocket) ssf.createSocket(socket, host, socket.getPort(), true);
+         sslSocket.setUseClientMode(true);
+         sslSocket.startHandshake();
++        verifyHostname(sslSocket, host);
+         socket = sslSocket;
+     }
+ 

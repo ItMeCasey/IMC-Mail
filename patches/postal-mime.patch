@@ -1,0 +1,97 @@
+diff --git a/dist/cjs/chunk-writer.js b/dist/cjs/chunk-writer.js
+index aac95eb0366b0573bd87125e038787c7386ed3ab..b36de0096c801854de4b0c92b8cfab646dbe9859 100644
+--- a/dist/cjs/chunk-writer.js
++++ b/dist/cjs/chunk-writer.js
+@@ -57,7 +57,18 @@ class ChunkWriter {
+     finalize() {
+         this.flush();
+         // convert an array of arraybuffers into a blob and then back into a single arraybuffer
+-        return (0, decode_strings_js_1.blobToArrayBuffer)(new Blob(this.chunks, { type: 'application/octet-stream' }));
++        return (async () => {
++            // IMC patch: join the byte chunks directly. React Native cannot make a Blob from bytes.
++            let total = 0;
++            for (const c of this.chunks) total += c.byteLength;
++            const joined = new Uint8Array(total);
++            let at = 0;
++            for (const c of this.chunks) {
++                joined.set(c, at);
++                at += c.byteLength;
++            }
++            return joined.buffer;
++        })();
+     }
+ }
+ exports.default = ChunkWriter;
+diff --git a/dist/cjs/pass-through-decoder.js b/dist/cjs/pass-through-decoder.js
+index 755a1a713eedabc521e9dc50da76f4f469db3e69..d54b8fabc9ee2ba9254ad85cd945cd5e006ca511 100644
+--- a/dist/cjs/pass-through-decoder.js
++++ b/dist/cjs/pass-through-decoder.js
+@@ -68,7 +68,18 @@ class PassThroughDecoder {
+         }
+         this.flushRun();
+         // convert an array of arraybuffers into a blob and then back into a single arraybuffer
+-        return (0, decode_strings_js_1.blobToArrayBuffer)(new Blob(this.chunks, { type: 'application/octet-stream' }));
++        return (async () => {
++            // IMC patch: join the byte chunks directly. React Native cannot make a Blob from bytes.
++            let total = 0;
++            for (const c of this.chunks) total += c.byteLength;
++            const joined = new Uint8Array(total);
++            let at = 0;
++            for (const c of this.chunks) {
++                joined.set(c, at);
++                at += c.byteLength;
++            }
++            return joined.buffer;
++        })();
+     }
+ }
+ exports.default = PassThroughDecoder;
+diff --git a/dist/esm/chunk-writer.js b/dist/esm/chunk-writer.js
+index eb22f8a286b9e3084161b0dff59aeec2fa28d78b..0de5d892294d85599032f78cae8a32f3f6b88cf7 100644
+--- a/dist/esm/chunk-writer.js
++++ b/dist/esm/chunk-writer.js
+@@ -55,7 +55,18 @@ export default class ChunkWriter {
+     finalize() {
+         this.flush();
+         // convert an array of arraybuffers into a blob and then back into a single arraybuffer
+-        return blobToArrayBuffer(new Blob(this.chunks, { type: 'application/octet-stream' }));
++        return (async () => {
++            // IMC patch: join the byte chunks directly. React Native cannot make a Blob from bytes.
++            let total = 0;
++            for (const c of this.chunks) total += c.byteLength;
++            const joined = new Uint8Array(total);
++            let at = 0;
++            for (const c of this.chunks) {
++                joined.set(c, at);
++                at += c.byteLength;
++            }
++            return joined.buffer;
++        })();
+     }
+ }
+ //# sourceMappingURL=chunk-writer.js.map
+\ No newline at end of file
+diff --git a/dist/esm/pass-through-decoder.js b/dist/esm/pass-through-decoder.js
+index 4d493af67ed6aecf6c6d306f012099d58c7a5944..0a0a4a92c61e4704d254c23fb166033a0ad398b4 100644
+--- a/dist/esm/pass-through-decoder.js
++++ b/dist/esm/pass-through-decoder.js
+@@ -66,7 +66,18 @@ export default class PassThroughDecoder {
+         }
+         this.flushRun();
+         // convert an array of arraybuffers into a blob and then back into a single arraybuffer
+-        return blobToArrayBuffer(new Blob(this.chunks, { type: 'application/octet-stream' }));
++        return (async () => {
++            // IMC patch: join the byte chunks directly. React Native cannot make a Blob from bytes.
++            let total = 0;
++            for (const c of this.chunks) total += c.byteLength;
++            const joined = new Uint8Array(total);
++            let at = 0;
++            for (const c of this.chunks) {
++                joined.set(c, at);
++                at += c.byteLength;
++            }
++            return joined.buffer;
++        })();
+     }
+ }
+ //# sourceMappingURL=pass-through-decoder.js.map

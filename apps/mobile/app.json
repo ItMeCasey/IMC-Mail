@@ -3,13 +3,18 @@
     "name": "IMC-Mail",
     "slug": "imc-mail",
     "version": "2026.10.2",
-    "scheme": "imcmail",
+    "scheme": [
+      "imcmail",
+      "com.itmecasey.imcmail"
+    ],
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "plugins": [
       "expo-status-bar",
-      "react-native-quick-crypto"
+      "react-native-quick-crypto",
+      "expo-web-browser",
+      "expo-secure-store"
     ],
     "android": {
       "package": "com.itmecasey.imcmail",

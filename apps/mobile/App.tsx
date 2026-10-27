@@ -1,122 +1,150 @@
-import { useState } from 'react'
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { useCallback, useEffect, useState } from 'react'
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import Constants from 'expo-constants'
 import { StatusBar } from 'expo-status-bar'
-import sanitizeHtml from 'sanitize-html'
-import {
-  assess,
-  canonicalRequest,
-  classify,
-  hashBody,
-  newDataKey,
-  newDeviceId,
-  newDeviceKeys,
-  openPayload,
-  parseICS,
-  safeWebUrl,
-  sealPayload,
-  signText,
-  verifyText
-} from '@imc/core'
+import type { Summary } from '@imc/mail'
+import { loadAccounts, removeAccount, signIn, type PhoneAccount } from './src/auth'
+import { newestInbox } from './src/inbox'
+import Diagnostics from './src/Diagnostics'
 
-// Phase 0: proves that the code shared with the desktop (packages/core) runs on a phone.
-// Each button runs a piece of that shared code and shows what it did.
-
-const ICS = ['BEGIN:VCALENDAR', 'METHOD:REQUEST', 'BEGIN:VEVENT', 'UID:phase0@imc', 'SUMMARY:Sponsor call', 'DTSTART:20261103T150000Z', 'DTEND:20261103T153000Z', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n')
-
-type Check = { name: string; run: () => Promise<string> | string }
-
-/** Signing a request the way a device signs sync requests: new key pair, sign, check, and check a changed request fails. */
-const signingCheck = async (): Promise<string> => {
-  const keys = await newDeviceKeys()
-  const text = canonicalRequest({ method: 'POST', path: '/v1/sync', timestamp: Date.now(), bodyHash: await hashBody('{}') })
-  const sig = await signText(keys.privateKey, text)
-  const ok = await verifyText(keys.publicKey, text, sig)
-  const changed = await verifyText(keys.publicKey, text + 'x', sig)
-  return `signature ${sig.length} chars, verifies: ${ok}, changed text verifies: ${changed}`
-}
-
-const checks: Check[] = [
-  {
-    name: 'Mail categories',
-    run: () => JSON.stringify(classify({ subject: 'Sponsorship opportunity for your channel', fromName: 'Brand Team', fromAddr: 'partners@brand.example', text: 'We would like to pay you to feature our product' })).slice(0, 220)
-  },
-  { name: 'Meeting invitations (iCalendar)', run: () => JSON.stringify(parseICS(ICS)).slice(0, 220) },
-  { name: 'Sanitizer', run: () => sanitizeHtml('<p onclick=x>hi<script>1</script></p>') },
-  { name: 'Safe links', run: () => `${safeWebUrl('https://example.com/join')} / ${safeWebUrl('javascript:alert(1)')}` },
-  { name: 'Scam shield', run: () => JSON.stringify(assess({ fromName: 'PayPal', fromAddr: 'x@paypa1-secure.example', subject: 'Verify now', text: 'click here' })).slice(0, 220) },
-  { name: 'Sync signing (ECDSA)', run: () => signingCheck() },
-  {
-    name: 'Sync encryption (AES-GCM)',
-    run: async () => {
-      const key = newDataKey()
-      const env = { id: 'label-1', type: 'label', hlc: `${'0'.repeat(15)}-0000-${newDeviceId()}`, deleted: false }
-      const sealed = await sealPayload(key, env, { name: 'Sponsors' })
-      return JSON.stringify(await openPayload(key, env, sealed))
-    }
-  }
-]
+type Screen = { name: 'home' } | { name: 'inbox'; account: PhoneAccount } | { name: 'diagnostics' }
 
 const describeError = (e: unknown): string => (e instanceof Error ? e.message : String(e))
 
-/** While developing, the computer that serves this app also listens for a report of these checks (port 8099). */
-const reportUrl = (): string | null => {
-  // The address of the development server, such as 192.168.1.16:8081, is also where the report goes.
+/** While developing, the computer that serves this app listens on port 8099 for a short status (never mail). */
+const tell = async (status: Record<string, unknown>): Promise<void> => {
   const host = /^([^/:]+)/.exec(Constants.expoConfig?.hostUri ?? '')?.[1]
-  return host ? `http://${host}:8099/report` : null
+  if (!host) return
+  try {
+    await fetch(`http://${host}:8099/report`, { method: 'POST', body: JSON.stringify(status) })
+  } catch {
+    // no computer listening; that is fine
+  }
+}
+
+const when = (ms: number | null): string => {
+  if (ms === null) return ''
+  const d = new Date(ms)
+  const now = new Date()
+  return d.toDateString() === now.toDateString() ? d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : d.toLocaleDateString([], { month: 'short', day: 'numeric' })
 }
 
 export default function App() {
-  const [out, setOut] = useState<Record<string, string>>({})
-  const [report, setReport] = useState<string | null>(null)
+  const [screen, setScreen] = useState<Screen>({ name: 'home' })
+  const [accounts, setAccounts] = useState<PhoneAccount[]>([])
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
 
-  const runOne = async (c: Check): Promise<string> => {
+  useEffect(() => void loadAccounts().then(setAccounts), [])
+
+  const add = async (provider: 'gmail' | 'microsoft') => {
+    setBusy(provider)
+    setError(null)
     try {
-      return String(await c.run())
+      const account = await signIn(provider)
+      setAccounts(await loadAccounts())
+      void tell({ signedIn: provider })
+      setScreen({ name: 'inbox', account })
     } catch (e) {
-      return `FAILED: ${describeError(e)}`
-    }
-  }
-
-  const run = async (c: Check) => {
-    const result = await runOne(c)
-    setOut((o) => ({ ...o, [c.name]: result }))
-  }
-
-  const runAll = async () => {
-    const results: Record<string, string> = {}
-    for (const c of checks) results[c.name] = await runOne(c)
-    setOut(results)
-    const url = reportUrl()
-    if (!url) return setReport('Not sent: no computer address.')
-    try {
-      await fetch(url, { method: 'POST', body: JSON.stringify(results) })
-      setReport('Sent to the computer.')
-    } catch (e) {
-      setReport(`Could not send: ${describeError(e)}`)
+      setError(describeError(e))
+      void tell({ signInFailed: provider, message: describeError(e) })
+    } finally {
+      setBusy(null)
     }
   }
 
   return (
     <View style={s.root}>
-      <StatusBar style="auto" />
-      <ScrollView contentContainerStyle={s.body}>
-        <Text style={s.title}>IMC-Mail for Android</Text>
-        <Text style={s.note}>Phase 0: the code shared with the desktop, running on this phone.</Text>
-        <Pressable accessibilityRole="button" onPress={() => void runAll()} style={[s.button, s.primary]}>
-          <Text style={s.buttonText}>Run all checks and send to the computer</Text>
-        </Pressable>
-        {report !== null && <Text style={s.result}>{report}</Text>}
-        {checks.map((c) => (
-          <View key={c.name} style={s.card}>
-            <Pressable accessibilityRole="button" onPress={() => void run(c)} style={s.button}>
-              <Text style={s.buttonText}>{c.name}</Text>
+      <StatusBar style="light" />
+      {screen.name === 'diagnostics' && <Diagnostics onBack={() => setScreen({ name: 'home' })} />}
+      {screen.name === 'inbox' && (
+        <Inbox
+          account={screen.account}
+          onBack={() => setScreen({ name: 'home' })}
+          onRemove={async () => {
+            await removeAccount(screen.account.email)
+            setAccounts(await loadAccounts())
+            setScreen({ name: 'home' })
+          }}
+        />
+      )}
+      {screen.name === 'home' && (
+        <ScrollView contentContainerStyle={s.body}>
+          <Text style={s.title}>IMC-Mail</Text>
+          <Text style={s.note}>Your mail on this phone. Sign-in goes through your provider; this app never sees your password.</Text>
+          {accounts.map((a) => (
+            <Pressable key={a.email} accessibilityRole="button" onPress={() => setScreen({ name: 'inbox', account: a })} style={s.card}>
+              <Text style={s.cardTitle}>{a.email}</Text>
+              <Text style={s.cardSub}>{a.provider === 'gmail' ? 'Google' : 'Microsoft'}</Text>
             </Pressable>
-            {out[c.name] !== undefined && <Text style={s.result}>{out[c.name]}</Text>}
-          </View>
-        ))}
-      </ScrollView>
+          ))}
+          <Pressable accessibilityRole="button" disabled={busy !== null} onPress={() => void add('gmail')} style={[s.button, busy !== null && s.disabled]}>
+            <Text style={s.buttonText}>{busy === 'gmail' ? 'Waiting for Google…' : 'Add a Google account'}</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button" disabled={busy !== null} onPress={() => void add('microsoft')} style={[s.button, busy !== null && s.disabled]}>
+            <Text style={s.buttonText}>{busy === 'microsoft' ? 'Waiting for Microsoft…' : 'Add a Microsoft account'}</Text>
+          </Pressable>
+          {error !== null && <Text style={s.error}>{error}</Text>}
+          <Pressable accessibilityRole="button" onPress={() => setScreen({ name: 'diagnostics' })}>
+            <Text style={s.link}>Diagnostics</Text>
+          </Pressable>
+        </ScrollView>
+      )}
     </View>
+  )
+}
+
+function Inbox({ account, onBack, onRemove }: { account: PhoneAccount; onBack: () => void; onRemove: () => void }) {
+  const [list, setList] = useState<Summary[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    setList(null)
+    setError(null)
+    try {
+      const got = await newestInbox(account)
+      setList(got)
+      void tell({ inbox: account.provider, count: got.length })
+    } catch (e) {
+      setError(describeError(e))
+      void tell({ inboxFailed: account.provider, message: describeError(e) })
+    }
+  }, [account])
+
+  useEffect(() => void load(), [load])
+
+  return (
+    <ScrollView contentContainerStyle={s.body}>
+      <Pressable accessibilityRole="button" onPress={onBack}>
+        <Text style={s.link}>Back</Text>
+      </Pressable>
+      <Text style={s.title}>{account.email}</Text>
+      {list === null && error === null && <ActivityIndicator color="#9aa4b2" />}
+      {error !== null && <Text style={s.error}>{error}</Text>}
+      {list?.length === 0 && <Text style={s.note}>The inbox is empty.</Text>}
+      {list?.map((m) => {
+        const unread = !m.flags.includes('\\Seen')
+        return (
+          <View key={m.uid} style={s.row}>
+            <View style={s.rowHead}>
+              <Text numberOfLines={1} style={[s.from, unread && s.unread]}>
+                {m.from?.name || m.from?.address || '(unknown sender)'}
+              </Text>
+              <Text style={s.when}>{when(m.date)}</Text>
+            </View>
+            <Text numberOfLines={1} style={[s.subject, unread && s.unread]}>
+              {m.subject || '(no subject)'}
+            </Text>
+          </View>
+        )
+      })}
+      <Pressable accessibilityRole="button" onPress={() => void load()}>
+        <Text style={s.link}>Refresh</Text>
+      </Pressable>
+      <Pressable accessibilityRole="button" onPress={onRemove}>
+        <Text style={[s.link, s.danger]}>Remove this account from the phone</Text>
+      </Pressable>
+    </ScrollView>
   )
 }
 
@@ -124,10 +152,20 @@ const s = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#101418' },
   body: { padding: 20, paddingTop: 56, gap: 12 },
   title: { color: '#f2f4f7', fontSize: 22, fontWeight: '600' },
-  note: { color: '#9aa4b2', marginBottom: 8 },
-  card: { gap: 6 },
-  primary: { backgroundColor: '#2b6cb0' },
-  button: { backgroundColor: '#1d2733', borderRadius: 8, padding: 14 },
+  note: { color: '#9aa4b2' },
+  card: { backgroundColor: '#1d2733', borderRadius: 8, padding: 14, gap: 2 },
+  cardTitle: { color: '#f2f4f7', fontSize: 16 },
+  cardSub: { color: '#9aa4b2', fontSize: 12 },
+  button: { backgroundColor: '#2b6cb0', borderRadius: 8, padding: 14 },
+  disabled: { opacity: 0.5 },
   buttonText: { color: '#f2f4f7', fontSize: 16 },
-  result: { color: '#c7d0dc', fontFamily: 'monospace', fontSize: 12 }
+  error: { color: '#f2a3a3' },
+  link: { color: '#8ab4f8', paddingVertical: 6 },
+  danger: { color: '#f2a3a3' },
+  row: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: '#2a3340', paddingVertical: 10, gap: 2 },
+  rowHead: { flexDirection: 'row', justifyContent: 'space-between', gap: 12 },
+  from: { color: '#c7d0dc', fontSize: 15, flex: 1 },
+  subject: { color: '#9aa4b2', fontSize: 14 },
+  unread: { color: '#f2f4f7', fontWeight: '600' },
+  when: { color: '#7d8794', fontSize: 12 }
 })
