@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "name": "IMC-Mail",
+    "slug": "imc-mail",
+    "version": "2026.10.2",
+    "scheme": "imcmail",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "plugins": ["expo-status-bar"],
+    "android": {
+      "package": "com.itmecasey.imcmail",
+      "allowBackup": false
+    }
+  }
+}
