@@ -3,8 +3,8 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
-// @imc/core ships TypeScript source, so it must be bundled rather than externalized.
-const bundledWorkspaceDeps = ['@imc/core']
+// @imc/core and @imc/mail ship TypeScript source, so it must be bundled rather than externalized.
+const bundledWorkspaceDeps = ['@imc/core', '@imc/mail']
 
 export default defineConfig({
   main: {

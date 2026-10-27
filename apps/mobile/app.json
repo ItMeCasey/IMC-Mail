@@ -14,7 +14,8 @@
       "expo-status-bar",
       "react-native-quick-crypto",
       "expo-web-browser",
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-sqlite"
     ],
     "android": {
       "package": "com.itmecasey.imcmail",

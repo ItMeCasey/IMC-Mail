@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@fontsource-variable/geist": "^5.3.0",
+    "@imc/mail": "workspace:*",
     "better-sqlite3": "^13.0.3",
     "date-holidays": "^3.38.0",
     "electron-updater": "^6.8.11",

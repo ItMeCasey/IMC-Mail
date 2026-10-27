@@ -3,7 +3,8 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from
 import { StatusBar } from 'expo-status-bar'
 import type { Summary } from '@imc/mail'
 import { loadAccounts, removeAccount, signIn, type PhoneAccount } from './src/auth'
-import { newestInbox } from './src/inbox'
+import { lastSynced, refreshInbox, savedInbox } from './src/inbox'
+import { forgetAccount } from './src/db'
 import Diagnostics from './src/Diagnostics'
 import MessageView from './src/MessageView'
 import { tell } from './src/report'
@@ -53,6 +54,7 @@ export default function App() {
           onBack={() => setScreen({ name: 'home' })}
           onRemove={async () => {
             await removeAccount(screen.account.email)
+            await forgetAccount(screen.account.email)
             setAccounts(await loadAccounts())
             setScreen({ name: 'home' })
           }}
@@ -88,17 +90,26 @@ function Inbox({ account, onBack, onRemove }: { account: PhoneAccount; onBack: (
   const [list, setList] = useState<Summary[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [open, setOpen] = useState<Summary | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
+  const [syncedAt, setSyncedAt] = useState<number | null>(null)
 
+  /** Shows the saved inbox at once, then brings it up to date from the server. Without a connection the saved copy stays. */
   const load = useCallback(async () => {
-    setList(null)
     setError(null)
+    const saved = await savedInbox(account)
+    setList(saved)
+    setSyncedAt(await lastSynced(account))
+    setRefreshing(true)
     try {
-      const got = await newestInbox(account)
-      setList(got)
-      void tell({ inbox: account.provider, count: got.length })
+      const result = await refreshInbox(account)
+      setList(await savedInbox(account))
+      setSyncedAt(await lastSynced(account))
+      void tell({ inbox: account.provider, ...result })
     } catch (e) {
-      setError(describeError(e))
+      setError(saved.length > 0 ? `Could not update, showing saved mail. ${describeError(e)}` : describeError(e))
       void tell({ inboxFailed: account.provider, message: describeError(e) })
+    } finally {
+      setRefreshing(false)
     }
   }, [account])
 
@@ -110,9 +121,9 @@ function Inbox({ account, onBack, onRemove }: { account: PhoneAccount; onBack: (
         account={account}
         summary={open}
         onBack={() => {
-          // Opening a message marked it read, so show it that way in the list.
-          setList((l) => l?.map((x) => (x.uid === open.uid && !x.flags.includes('\\Seen') ? { ...x, flags: [...x.flags, '\\Seen'] } : x)) ?? null)
+          // Opening a message marked it read; the saved copy has it, so show the list from there.
           setOpen(null)
+          void savedInbox(account).then(setList)
         }}
       />
     )
@@ -124,9 +135,10 @@ function Inbox({ account, onBack, onRemove }: { account: PhoneAccount; onBack: (
         <Text style={s.link}>Back</Text>
       </Pressable>
       <Text style={s.title}>{account.email}</Text>
-      {list === null && error === null && <ActivityIndicator color="#9aa4b2" />}
+      {(list === null || refreshing) && <ActivityIndicator color="#9aa4b2" />}
+      {!refreshing && syncedAt !== null && error === null && <Text style={s.note}>Updated {when(syncedAt)}</Text>}
       {error !== null && <Text style={s.error}>{error}</Text>}
-      {list?.length === 0 && <Text style={s.note}>The inbox is empty.</Text>}
+      {list?.length === 0 && !refreshing && <Text style={s.note}>The inbox is empty.</Text>}
       {list?.map((m) => {
         const unread = !m.flags.includes('\\Seen')
         return (
