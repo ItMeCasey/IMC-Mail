@@ -1,0 +1,21 @@
+{
+  "name": "@imc/sync",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Sync server for IMC-Mail: stores encrypted settings records and relays them between a user's devices",
+  "scripts": {
+    "build": "vite build",
+    "start": "node dist/server.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@imc/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "vite": "^8.3.5",
+    "vitest": "^5.0.5"
+  }
+}

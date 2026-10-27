@@ -34,7 +34,9 @@ export const syncResponse = z.object({
   /** Ask again with this as `since`. */
   seq: z.number().int().min(0),
   /** More are waiting: ask again straight away. */
-  more: z.boolean()
+  more: z.boolean(),
+  /** Records from this push the server turned away (a clock too far ahead, or the group is full). */
+  refused: z.number().int().min(0).default(0)
 })
 export type SyncResponse = z.infer<typeof syncResponse>
 
