@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Bell, Bug, CalendarDays, Download, HardDrive, ListFilter, Mail, Minus, Palette, Plus, ShieldCheck, SlidersHorizontal, Square, Trash2, Upload, Users, X, type LucideIcon } from 'lucide-react'
+import { Bell, Bug, CalendarDays, Download, HardDrive, ListFilter, Mail, Minus, Palette, Plus, ShieldCheck, SlidersHorizontal, Trash2, Upload, Users, X, type LucideIcon } from 'lucide-react'
 import type { Account } from '@imc/core'
 import StreamSafeControl from './StreamSafeControl'
 import ThemeSwitch from './ThemeSwitch'
 import { useStreamSafe } from './streamsafe'
+import { ResizeGrips } from './WindowFrame'
 
 const ctl = 'grid h-10 w-11 place-items-center text-ink-2 transition-colors duration-(--dur-fast) hover:bg-hover hover:text-ink focus-visible:-outline-offset-2'
 const row =
@@ -228,7 +229,7 @@ export default function SettingsWindow() {
     window.addEventListener('focus', again)
     return () => window.removeEventListener('focus', again)
   }, [qcAll])
-  const control = (action: 'minimize' | 'maximize' | 'close') => void window.imc.invoke('settings:control', { action })
+  const control = (action: 'minimize' | 'close') => void window.imc.invoke('settings:control', { action })
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') control('close')
@@ -256,7 +257,7 @@ export default function SettingsWindow() {
   }
 
   return (
-    <div role="dialog" aria-labelledby="settings-title" className="flex h-screen flex-col overflow-hidden bg-raised text-ink">
+    <div role="dialog" aria-labelledby="settings-title" className="relative flex h-full flex-col overflow-hidden rounded-(--win-radius) bg-raised text-ink">
       <header className="flex h-10 shrink-0 items-center border-b border-line bg-rail" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
         <h2 id="settings-title" className="flex-1 px-4 text-sm font-medium text-ink-2 select-none">
           Settings
@@ -264,9 +265,6 @@ export default function SettingsWindow() {
         <div className="flex" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
           <button className={ctl} aria-label="Minimize" title="Minimize" onClick={() => control('minimize')}>
             <Minus size={14} strokeWidth={1.75} aria-hidden />
-          </button>
-          <button className={ctl} aria-label="Maximize" title="Maximize" onClick={() => control('maximize')}>
-            <Square size={12} strokeWidth={1.75} aria-hidden />
           </button>
           <button className={`${ctl} hover:text-alert`} aria-label="Close settings" title="Close" onClick={() => control('close')}>
             <X size={15} strokeWidth={1.75} aria-hidden />
@@ -456,6 +454,7 @@ export default function SettingsWindow() {
           )}
         </div>
       </div>
+      <ResizeGrips minW={640} minH={440} />
     </div>
   )
 }

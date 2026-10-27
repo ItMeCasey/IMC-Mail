@@ -471,7 +471,7 @@ export const ipcContract = {
   'settings:action': { input: settingsActionSchema, output: z.undefined() },
   /** Title bar buttons of the settings window. */
   'settings:control': {
-    input: z.object({ action: z.enum(['minimize', 'maximize', 'close']) }),
+    input: z.object({ action: z.enum(['minimize', 'close']) }),
     output: z.undefined()
   },
   /** Public holidays on days from `from` up to `to` (epoch ms) for the chosen country. Empty while holidays are off. */

@@ -6,8 +6,7 @@ import { useStreamSafe } from './streamsafe'
 /** The window is frameless and transparent so its corners can be rounded; this draws what the OS no longer does. */
 
 type Edge = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
-const MIN_W = 1000
-const MIN_H = 600
+const MAIN_MIN = { minW: 1000, minH: 600 }
 
 const GRIPS: { edge: Edge; className: string; cursor: string }[] = [
   { edge: 'n', className: 'top-0 right-3 left-3 h-1', cursor: 'ns-resize' },
@@ -21,7 +20,7 @@ const GRIPS: { edge: Edge; className: string; cursor: string }[] = [
 ]
 
 /** Resizes by dragging an edge or corner. Transparent windows cannot be resized by the OS, so it is done here. */
-function Grip({ edge, className, cursor }: { edge: Edge; className: string; cursor: string }) {
+function Grip({ edge, className, cursor, minW, minH }: { edge: Edge; className: string; cursor: string; minW: number; minH: number }) {
   const start = useRef<{ x: number; y: number; b: { x: number; y: number; width: number; height: number } } | null>(null)
   const frame = useRef(0)
 
@@ -41,14 +40,14 @@ function Grip({ edge, className, cursor }: { edge: Edge; className: string; curs
       const dx = screenX - s.x
       const dy = screenY - s.y
       let { x, y, width, height } = s.b
-      if (edge.includes('e')) width = Math.max(MIN_W, s.b.width + dx)
-      if (edge.includes('s')) height = Math.max(MIN_H, s.b.height + dy)
+      if (edge.includes('e')) width = Math.max(minW, s.b.width + dx)
+      if (edge.includes('s')) height = Math.max(minH, s.b.height + dy)
       if (edge.includes('w')) {
-        width = Math.max(MIN_W, s.b.width - dx)
+        width = Math.max(minW, s.b.width - dx)
         x = s.b.x + (s.b.width - width)
       }
       if (edge.includes('n')) {
-        height = Math.max(MIN_H, s.b.height - dy)
+        height = Math.max(minH, s.b.height - dy)
         y = s.b.y + (s.b.height - height)
       }
       void window.imc.invoke('window:setBounds', { x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) })
@@ -59,6 +58,11 @@ function Grip({ edge, className, cursor }: { edge: Edge; className: string; curs
     e.currentTarget.releasePointerCapture(e.pointerId)
   }
   return <div aria-hidden className={`absolute z-50 ${className}`} style={{ cursor, touchAction: 'none' }} onPointerDown={(e) => void onDown(e)} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} />
+}
+
+/** Invisible edges and corners to drag, for a window that has no frame of its own. */
+export function ResizeGrips({ minW, minH }: { minW: number; minH: number }) {
+  return GRIPS.map((g) => <Grip key={g.edge} {...g} minW={minW} minH={minH} />)
 }
 
 const ctl =
@@ -127,7 +131,7 @@ export default function WindowFrame({ children }: { children: React.ReactNode })
         <TitleBar maximized={maximized} />
         <div className="relative min-h-0 flex-1">{children}</div>
       </div>
-      {!maximized && GRIPS.map((g) => <Grip key={g.edge} {...g} />)}
+      {!maximized && <ResizeGrips {...MAIN_MIN} />}
     </div>
   )
 }

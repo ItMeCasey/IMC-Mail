@@ -95,6 +95,12 @@ function reportMaximized(m: boolean): void {
 }
 
 let mainWin: BrowserWindow | null = null
+
+/** The window whose edge is being dragged: the one with focus, since the grips are in its page. */
+function targetWindow(): BrowserWindow | undefined {
+  const focused = BrowserWindow.getFocusedWindow()
+  return focused && !focused.isDestroyed() ? focused : (mainWin ?? BrowserWindow.getAllWindows()[0])
+}
 let settingsWin: BrowserWindow | null = null
 
 /** Settings live in a window of their own: a normal window with its own title bar that can be moved and resized anywhere. */
@@ -113,8 +119,12 @@ function openSettingsWindow(): void {
     show: false,
     title: 'IMC-Mail settings',
     icon: appIcon,
+    // Frameless and transparent like the main window, so the corners are rounded in CSS; the
+    // resize edges are drawn by the page (see ResizeGrips).
     frame: false,
-    backgroundColor: '#1a1a1a',
+    transparent: true,
+    hasShadow: false,
+    backgroundColor: '#00000000',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -667,7 +677,6 @@ app.whenReady().then(async () => {
     'settings:control': ({ action }) => {
       if (!settingsWin || settingsWin.isDestroyed()) return
       if (action === 'minimize') settingsWin.minimize()
-      else if (action === 'maximize') settingsWin.isMaximized() ? settingsWin.unmaximize() : settingsWin.maximize()
       else settingsWin.close()
     },
     'window:control': ({ action }) => {
@@ -679,14 +688,15 @@ app.whenReady().then(async () => {
       else w.close()
     },
     'window:bounds': () => {
-      const w = mainWin ?? BrowserWindow.getAllWindows()[0]
+      const w = targetWindow()
       if (!w) return { x: 0, y: 0, width: 1280, height: 800, maximized: false }
-      return { ...w.getBounds(), maximized: windowState.maximized }
+      return { ...w.getBounds(), maximized: w === mainWin && windowState.maximized }
     },
     'window:setBounds': ({ x, y, width, height }) => {
-      const w = mainWin ?? BrowserWindow.getAllWindows()[0]
-      if (!w || windowState.maximized) return
-      w.setBounds({ x, y, width: Math.max(1000, width), height: Math.max(600, height) })
+      const w = targetWindow()
+      if (!w || (w === mainWin && windowState.maximized)) return
+      const [minW, minH] = w.getMinimumSize()
+      w.setBounds({ x, y, width: Math.max(minW ?? 0, width), height: Math.max(minH ?? 0, height) })
     },
     'settings:export': async () => {
       const labels = store.listLabels()

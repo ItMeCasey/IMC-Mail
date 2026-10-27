@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { CalendarDays, ChevronLeft, ChevronRight, MapPin, Plus, Repeat, Video } from 'lucide-react'
 import type { Account, CalendarEvent, CalendarOccurrence } from '@imc/core'
 import MeetingDialog from './MeetingDialog'
 import MonthView from './MonthView'
+import TimeGrid from './TimeGrid'
 import { monthGrid } from './monthGrid'
 import { RESPONSE_LABEL } from './InviteCard'
 import { Private } from './streamsafe'
@@ -12,6 +13,30 @@ const dayHead = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'lo
 const clock = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' })
 const DAYS = 30
 const monthName = new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' })
+const rangeName = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+
+type Mode = 'agenda' | 'day' | 'week' | 'month'
+const MODES: { id: Mode; label: string }[] = [
+  { id: 'agenda', label: 'Agenda' },
+  { id: 'day', label: 'Day' },
+  { id: 'week', label: 'Week' },
+  { id: 'month', label: 'Month' }
+]
+
+const midnight = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate())
+/** The Sunday that starts the week holding this day (the month view starts its weeks on Sunday too). */
+const weekStart = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate() - d.getDay())
+
+/** Whether something between the pointer and `stop` can still scroll that way, so the wheel should scroll it first. */
+function canScroll(from: EventTarget, stop: HTMLElement, dy: number): boolean {
+  for (let el = from as HTMLElement | null; el && el !== stop; el = el.parentElement) {
+    if (el.scrollHeight <= el.clientHeight + 1) continue
+    const overflow = getComputedStyle(el).overflowY
+    if (overflow !== 'auto' && overflow !== 'scroll') continue
+    if (dy > 0 ? el.scrollTop + el.clientHeight < el.scrollHeight - 1 : el.scrollTop > 0) return true
+  }
+  return false
+}
 
 const startOfDay = (ms: number) => new Date(new Date(ms).setHours(0, 0, 0, 0)).getTime()
 
@@ -29,19 +54,31 @@ export default function Agenda({
   onOpenMessage: (id: string) => void
 }) {
   const qc = useQueryClient()
-  const [mode, setMode] = useState<'agenda' | 'month'>('agenda')
-  const [cursor, setCursor] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1))
+  const [mode, setMode] = useState<Mode>('agenda')
+  const [cursor, setCursor] = useState(() => midnight(new Date()))
   const [newStart, setNewStart] = useState<number | null>(null)
-  // The agenda shows the next 30 days; the month view shows the weeks drawn for that month.
+  // The agenda shows the next 30 days; the others show their day, week, or the weeks drawn for the month.
+  const shownDays = useMemo(() => {
+    if (mode === 'day') return [cursor]
+    if (mode === 'week') {
+      const s = weekStart(cursor)
+      return Array.from({ length: 7 }, (_, i) => new Date(s.getFullYear(), s.getMonth(), s.getDate() + i))
+    }
+    return []
+  }, [mode, cursor])
   const [from, to] = useMemo(() => {
     if (mode === 'agenda') {
       const f = startOfDay(Date.now())
       return [f, f + DAYS * 86_400_000]
     }
+    if (mode === 'day' || mode === 'week') {
+      const last = shownDays[shownDays.length - 1]!
+      return [shownDays[0]!.getTime(), new Date(last.getFullYear(), last.getMonth(), last.getDate() + 1).getTime()]
+    }
     const weeks = monthGrid(cursor.getFullYear(), cursor.getMonth())
     const last = weeks[weeks.length - 1]![6]!
     return [weeks[0]![0]!.getTime(), new Date(last.getFullYear(), last.getMonth(), last.getDate() + 1).getTime()]
-  }, [mode, cursor])
+  }, [mode, cursor, shownDays])
   const list = useQuery({
     queryKey: ['calendar', from, to],
     queryFn: () => window.imc.invoke('calendar:list', { from, to })
@@ -51,7 +88,45 @@ export default function Agenda({
     queryFn: () => window.imc.invoke('calendar:holidays', { from, to })
   })
   const [editing, setEditing] = useState<CalendarEvent | 'new' | null>(null)
-  const step = (n: number) => setCursor((c) => new Date(c.getFullYear(), c.getMonth() + n, 1))
+  const step = (n: number) =>
+    setCursor((c) =>
+      mode === 'month'
+        ? new Date(c.getFullYear(), c.getMonth() + n, 1)
+        : new Date(c.getFullYear(), c.getMonth(), c.getDate() + n * (mode === 'week' ? 7 : 1))
+    )
+  const unit = mode === 'month' ? 'month' : mode === 'week' ? 'week' : 'day'
+  const title =
+    mode === 'month'
+      ? monthName.format(cursor)
+      : mode === 'day'
+        ? dayHead.format(cursor)
+        : mode === 'week'
+          ? rangeName.formatRange(shownDays[0]!, shownDays[6]!)
+          : ''
+
+  // Scrolling moves the calendar: a month at a time in the month view; sideways (or with Shift) a week or a day at a
+  // time in the others, where the wheel itself scrolls the hours.
+  const wheel = useRef({ sum: 0, last: 0, lockedUntil: 0 })
+  const onWheel = (e: React.WheelEvent<HTMLElement>) => {
+    if (mode === 'agenda') return
+    const sideways = e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)
+    if (!sideways && (mode !== 'month' || canScroll(e.target, e.currentTarget, e.deltaY))) return
+    const delta = sideways ? e.deltaX || e.deltaY : e.deltaY
+    const w = wheel.current
+    const now = Date.now()
+    if (now < w.lockedUntil) return
+    w.sum = now - w.last > 250 ? delta : w.sum + delta
+    w.last = now
+    if (Math.abs(w.sum) < 40) return
+    step(w.sum > 0 ? 1 : -1)
+    w.sum = 0
+    w.lockedUntil = now + 350
+  }
+  const newAt = (at: number) => {
+    if (accounts.length === 0) return
+    setNewStart(at)
+    setEditing('new')
+  }
 
   const days = useMemo(() => {
     const by = new Map<number, { holidays: string[]; items: CalendarOccurrence[] }>()
@@ -67,31 +142,28 @@ export default function Agenda({
         <CalendarDays size={18} strokeWidth={1.75} className="text-ink-2" aria-hidden />
         <h2 className="text-md font-semibold">Calendar</h2>
         <div role="radiogroup" aria-label="View" className="flex divide-x divide-line overflow-hidden rounded-md border border-line-strong">
-          {(['agenda', 'month'] as const).map((m) => (
+          {MODES.map((m) => (
             <button
-              key={m}
+              key={m.id}
               role="radio"
-              aria-checked={mode === m}
-              onClick={() => setMode(m)}
-              className={`h-8 px-3 text-sm ${mode === m ? 'bg-selected font-medium text-ink' : 'text-ink-2 hover:bg-hover hover:text-ink'}`}
+              aria-checked={mode === m.id}
+              onClick={() => setMode(m.id)}
+              className={`h-8 px-3 text-sm ${mode === m.id ? 'bg-selected font-medium text-ink' : 'text-ink-2 hover:bg-hover hover:text-ink'}`}
             >
-              {m === 'agenda' ? 'Agenda' : 'Month'}
+              {m.label}
             </button>
           ))}
         </div>
-        {mode === 'month' && (
+        {mode !== 'agenda' && (
           <div className="flex items-center gap-1">
-            <button className="grid size-8 place-items-center rounded-md text-ink-2 hover:bg-hover" aria-label="Previous month" onClick={() => step(-1)}>
+            <button className="grid size-8 place-items-center rounded-md text-ink-2 hover:bg-hover" aria-label={`Previous ${unit}`} onClick={() => step(-1)}>
               <ChevronLeft size={16} strokeWidth={1.75} aria-hidden />
             </button>
-            <span className="num min-w-36 text-center font-medium">{monthName.format(cursor)}</span>
-            <button className="grid size-8 place-items-center rounded-md text-ink-2 hover:bg-hover" aria-label="Next month" onClick={() => step(1)}>
+            <span className="num min-w-48 text-center font-medium">{title}</span>
+            <button className="grid size-8 place-items-center rounded-md text-ink-2 hover:bg-hover" aria-label={`Next ${unit}`} onClick={() => step(1)}>
               <ChevronRight size={16} strokeWidth={1.75} aria-hidden />
             </button>
-            <button
-              className="h-8 rounded-md border border-line-strong px-3 text-sm hover:bg-hover"
-              onClick={() => setCursor(new Date(new Date().getFullYear(), new Date().getMonth(), 1))}
-            >
+            <button className="h-8 rounded-md border border-line-strong px-3 text-sm hover:bg-hover" onClick={() => setCursor(midnight(new Date()))}>
               Today
             </button>
           </div>
@@ -112,21 +184,24 @@ export default function Agenda({
       </header>
 
       {mode === 'month' && (
-        <MonthView
-          year={cursor.getFullYear()}
-          month={cursor.getMonth()}
-          occurrences={list.data ?? []}
-          holidays={holidays.data ?? []}
-          hide={hide}
-          onOpen={(e) => setEditing(e)}
-          onNew={(at) => {
-            if (accounts.length === 0) return
-            setNewStart(at)
-            setEditing('new')
-          }}
-        />
+        <div className="flex min-h-0 flex-1 flex-col" onWheel={onWheel}>
+          <MonthView
+            year={cursor.getFullYear()}
+            month={cursor.getMonth()}
+            occurrences={list.data ?? []}
+            holidays={holidays.data ?? []}
+            hide={hide}
+            onOpen={(e) => setEditing(e)}
+            onNew={newAt}
+          />
+        </div>
       )}
-      <div className={`min-h-0 flex-1 overflow-y-auto ${mode === 'month' ? 'hidden' : ''}`}>
+      {(mode === 'day' || mode === 'week') && (
+        <div className="flex min-h-0 flex-1 flex-col" onWheel={onWheel}>
+          <TimeGrid days={shownDays} occurrences={list.data ?? []} holidays={holidays.data ?? []} hide={hide} onOpen={(e) => setEditing(e)} onNew={newAt} />
+        </div>
+      )}
+      <div className={`min-h-0 flex-1 overflow-y-auto ${mode === 'agenda' ? '' : 'hidden'}`}>
         {list.isPending && <p className="p-4 text-ink-3">Loading…</p>}
         {list.data && holidays.data && days.length === 0 && (
           <div className="p-6 text-ink-2">
