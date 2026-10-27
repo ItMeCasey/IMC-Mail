@@ -7,6 +7,7 @@ import { notifyChanged, useChanged } from './changes'
 import { AppBar, Avatar, Group, SettingRow } from './chrome'
 import { forgetAccount, items, queue, settings } from './db'
 import { flushOutbox } from './mail'
+import { startLive, stopLive } from './live'
 import { rescheduleReminders, setUpNotifications } from './notify'
 import { applyPrivacy } from './privacy'
 import { sync, syncNow } from './phonesync'
@@ -113,6 +114,20 @@ export default function SettingsScreen({ accounts, onAccountsChanged, onAddAccou
         <Group title="Notifications">
           <SettingRow label="Notifications" right={<Toggle label="Notifications" value={notify.enabled} onChange={(v) => setNotify({ enabled: v })} />} />
           <SettingRow label="Check mail in the background" hint="About every 15 minutes, when Android allows" right={<Toggle label="Background check" value={local.checkMailInBackground} onChange={(v) => change({ checkMailInBackground: v })} />} />
+          <SettingRow
+            label="Live mail"
+            hint="Keeps a connection open so new mail arrives at once. Shows a notification while it runs and uses more battery."
+            right={
+              <Toggle
+                label="Live mail"
+                value={local.liveMail}
+                onChange={(v) => {
+                  change({ liveMail: v })
+                  void (v ? setUpNotifications().then(() => startLive()) : stopLive()).catch((e: unknown) => setNote(e instanceof Error ? e.message : String(e)))
+                }}
+              />
+            }
+          />
           <SettingRow label="Quiet hours" hint={`${notify.quietHours.start} to ${notify.quietHours.end}`} right={<Toggle label="Quiet hours" value={notify.quietHours.enabled} onChange={(v) => setNotify({ quietHours: { ...notify.quietHours, enabled: v } })} />} />
           <SettingRow label="Meeting reminders" right={<Toggle label="Meeting reminders" value={prefs.meetingReminders} onChange={(v) => pref({ meetingReminders: v })} />} />
           <SettingRow

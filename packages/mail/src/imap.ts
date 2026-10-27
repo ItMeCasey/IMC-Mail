@@ -76,6 +76,10 @@ interface Pending {
   continuations: number
   done: (r: Reply) => void
   fail: (e: Error) => void
+  /** For IDLE: told about each untagged reply as it arrives. */
+  onUntagged?: (r: RawResponse) => void
+  /** For IDLE: called when the server says it is waiting ("+ idling"), instead of answering it. */
+  onContinue?: () => void
 }
 
 const SPECIAL: Record<string, SpecialUse> = {
@@ -134,6 +138,7 @@ export class ImapClient {
   private tags = 0
   private closed: Error | null = null
   private caps = new Set<string>()
+  private wakeIdle: (() => void) | null = null
 
   constructor(
     private connect: Connect,
@@ -341,6 +346,65 @@ export class ImapClient {
     await this.run(`APPEND ${quote(folder)}${clean ? ` (${clean})` : ''} {${raw.length}}`, { continuation: () => raw })
   }
 
+  /**
+   * Waits on the open folder for news (IDLE): returns 'changed' when the server reports new mail, mail removed or flags
+   * changed, and 'quiet' after `maxMs` with none (servers drop an idle connection after about half an hour, so ask
+   * again before then). `wake()` ends it early with 'quiet'. After either answer the connection is ready for ordinary
+   * commands again.
+   */
+  idle(maxMs: number): Promise<'changed' | 'quiet'> {
+    const job = this.chain.then(
+      () =>
+        new Promise<'changed' | 'quiet'>((resolve, reject) => {
+          if (this.closed) return reject(this.closed)
+          const socket = this.socket
+          if (!socket) return reject(new ImapError('Not connected', 'closed'))
+          if (!this.caps.has('IDLE')) return reject(new ImapError('This server cannot wait for new mail (no IDLE)', 'protocol'))
+          const tag = `A${String(++this.tags).padStart(4, '0')}`
+          let outcome: 'changed' | 'quiet' = 'quiet'
+          let stopped = false
+          const stop = (why: 'changed' | 'quiet') => {
+            if (stopped) return
+            stopped = true
+            outcome = why
+            clearTimeout(timer)
+            this.wakeIdle = null
+            socket.write(enc.encode('DONE\r\n'))
+          }
+          const timer = setTimeout(() => stop('quiet'), maxMs)
+          this.wakeIdle = () => stop('quiet')
+          this.pending = {
+            tag,
+            untagged: [],
+            continuation: undefined,
+            continuations: 0,
+            done: () => {
+              clearTimeout(timer)
+              this.wakeIdle = null
+              resolve(outcome)
+            },
+            fail: (e) => {
+              clearTimeout(timer)
+              this.wakeIdle = null
+              reject(e)
+            },
+            onContinue: () => undefined,
+            onUntagged: (r) => {
+              if (/^\* \d+ (EXISTS|EXPUNGE|FETCH|RECENT)\b/i.test(r.text)) stop('changed')
+            }
+          }
+          socket.write(enc.encode(`${tag} IDLE\r\n`))
+        })
+    )
+    this.chain = job.catch(() => undefined)
+    return job
+  }
+
+  /** Ends a wait started with `idle` right away. */
+  wake(): void {
+    this.wakeIdle?.()
+  }
+
   async logout(): Promise<void> {
     try {
       await this.run('LOGOUT')
@@ -430,6 +494,7 @@ export class ImapClient {
     const p = this.pending
     if (!p) return
     if (r.text.startsWith('+')) {
+      if (p.onContinue) return p.onContinue()
       const line = p.continuation?.(p.continuations++) ?? ''
       if (typeof line === 'string') this.socket?.write(enc.encode(`${line}\r\n`))
       else {
@@ -452,6 +517,7 @@ export class ImapClient {
     }
     if (r.text.startsWith('* BYE')) return
     p.untagged.push(r)
+    p.onUntagged?.(r)
   }
 
   private end(e: Error): void {

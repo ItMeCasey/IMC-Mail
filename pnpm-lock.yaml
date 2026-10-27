@@ -211,6 +211,9 @@ importers:
       react-native:
         specifier: 0.88.0
         version: 0.88.0(@babel/core@7.29.7(supports-color@7.2.0))(@types/react@19.3.0)(react@19.3.0)(supports-color@7.2.0)
+      react-native-background-actions:
+        specifier: ^4.1.0
+        version: 4.1.0(react-native@0.88.0(@babel/core@7.29.7(supports-color@7.2.0))(@types/react@19.3.0)(react@19.3.0)(supports-color@7.2.0))
       react-native-nitro-modules:
         specifier: ^0.37.1
         version: 0.37.1(react-native@0.88.0(@babel/core@7.29.7(supports-color@7.2.0))(@types/react@19.3.0)(react@19.3.0)(supports-color@7.2.0))(react@19.3.0)
@@ -3860,6 +3863,11 @@ packages:
 
   react-is@18.3.1:
     resolution: {integrity: sha512-/LLMVyas0ljjAtoYiPqYiL8VWXzUUdThrmU5+n20DZv+a+ClRoevUzw5JxU+Ieh5/c87ytoTBV9G1FiKfNJdmg==}
+
+  react-native-background-actions@4.1.0:
+    resolution: {integrity: sha512-7dyTZOqX+CsskwAxTXj7zLMOSg/JP9Wf+smX7EoFTlqfChzDBlhGr+8Qc35ExXdoM+nUezb3DoHexNbDid2A9g==}
+    peerDependencies:
+      react-native: '>=0.47.0'
 
   react-native-nitro-modules@0.37.1:
     resolution: {integrity: sha512-KpW6EQVQ/bfegpCGxN9Be+ndvsfj56t4IESEvCASu9gWpJa/NDfHpIeIwCOvZQ3eXmLEj6YD4wCLqcC1FJPr2w==}
@@ -8678,6 +8686,11 @@ snapshots:
       scheduler: 0.28.0
 
   react-is@18.3.1: {}
+
+  react-native-background-actions@4.1.0(react-native@0.88.0(@babel/core@7.29.7(supports-color@7.2.0))(@types/react@19.3.0)(react@19.3.0)(supports-color@7.2.0)):
+    dependencies:
+      eventemitter3: 4.0.7
+      react-native: 0.88.0(@babel/core@7.29.7(supports-color@7.2.0))(@types/react@19.3.0)(react@19.3.0)(supports-color@7.2.0)
 
   react-native-nitro-modules@0.37.1(react-native@0.88.0(@babel/core@7.29.7(supports-color@7.2.0))(@types/react@19.3.0)(react@19.3.0)(supports-color@7.2.0))(react@19.3.0):
     dependencies:

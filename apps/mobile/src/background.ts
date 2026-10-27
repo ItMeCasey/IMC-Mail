@@ -1,12 +1,13 @@
 import * as BackgroundTask from 'expo-background-task'
 import * as TaskManager from 'expo-task-manager'
-import { newMailToNotify } from '@imc/mail'
 import { loadAccounts } from './auth'
-import { cache, settings } from './db'
-import { flushOutbox, folderKey, refreshFolder, savedMessages } from './mail'
-import { mailAllowed, notifyNewMail, rescheduleReminders } from './notify'
+import { settings } from './db'
+import { checkInbox } from './inbox-check'
+import { flushOutbox } from './mail'
+import { notifyNewMail, rescheduleReminders } from './notify'
 import { syncNow } from './phonesync'
 import { tell } from './report'
+import type { Summary } from '@imc/mail'
 
 // Android runs this now and then (at best every 15 minutes, and less when the battery is low) even while the app is
 // closed: it syncs with your other devices, checks each account's inbox for new mail, sends anything waiting in the
@@ -20,13 +21,10 @@ TaskManager.defineTask(TASK, async () => {
     const accounts = await loadAccounts()
     await flushOutbox(accounts).catch(() => 0)
     if (settings.get().checkMailInBackground) {
-      const found = []
+      const found: Summary[] = []
       for (const account of accounts) {
-        const inbox = { path: 'INBOX', name: 'Inbox', delimiter: null, flags: [], specialUse: 'inbox' as const, selectable: true }
         try {
-          const before = (await cache.folderState(account.email, folderKey(inbox))) ? await savedMessages(account, inbox) : null
-          await refreshFolder(account, inbox)
-          found.push(...newMailToNotify(before, await savedMessages(account, inbox), { now: Date.now(), allowed: mailAllowed() }))
+          found.push(...(await checkInbox(account)))
         } catch {
           // One account being unreachable should not stop the others.
         }

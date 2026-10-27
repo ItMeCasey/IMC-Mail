@@ -18,6 +18,7 @@
       "expo-sqlite",
       "expo-background-task",
       "expo-sharing",
+      "./plugins/withLiveMail",
       [
         "expo-camera",
         {
@@ -34,6 +35,12 @@
     ],
     "android": {
       "package": "com.itmecasey.imcmail",
+      "permissions": [
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
+        "android.permission.WAKE_LOCK",
+        "android.permission.POST_NOTIFICATIONS"
+      ],
       "allowBackup": false
     },
     "owner": "itmecasey",

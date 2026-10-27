@@ -270,3 +270,68 @@ describe('the parts', () => {
     expect(node).toEqual(['UID', '4', 'FLAGS', ['\\Seen', '\\Flagged'], 'X', 'a "quoted" b', 'Y', null, 'BODY[HEADER.FIELDS (FROM TO)]', 'Z'])
   })
 })
+
+describe('waiting for new mail (IDLE)', () => {
+  const idleServer = () => server({ capabilities: ['IMAP4rev1', 'SASL-IR', 'AUTH=XOAUTH2', 'IDLE'], folders: [{ ...inbox, messages: [...inbox.messages!] }] })
+  const ready = async (s: FakeServer) => {
+    const c = client(s)
+    await c.open()
+    await c.login('me@x.example', 'pw')
+    await c.select('INBOX')
+    return c
+  }
+  const settle = () => new Promise((r) => setTimeout(r, 10))
+
+  it('returns changed as soon as the server announces new mail, and the connection works afterwards', async () => {
+    const s = idleServer()
+    const c = await ready(s)
+    const waiting = c.idle(5000)
+    await settle()
+    expect(s.idling).toBe(true)
+    s.announce('3 EXISTS')
+    await expect(waiting).resolves.toBe('changed')
+    expect(s.idling).toBe(false)
+    expect(s.received.some((l) => l === 'DONE')).toBe(true)
+    await expect(c.capability()).resolves.toBeDefined()
+  })
+
+  it('returns quiet when nothing happens within the time given', async () => {
+    const s = idleServer()
+    const c = await ready(s)
+    await expect(c.idle(30)).resolves.toBe('quiet')
+    expect(s.idling).toBe(false)
+  })
+
+  it('can be woken early', async () => {
+    const s = idleServer()
+    const c = await ready(s)
+    const waiting = c.idle(60_000)
+    await settle()
+    c.wake()
+    await expect(waiting).resolves.toBe('quiet')
+  })
+
+  it('fails when the server hangs up while waiting', async () => {
+    const s = idleServer()
+    const c = await ready(s)
+    const waiting = c.idle(60_000)
+    await settle()
+    s.hangUp()
+    await expect(waiting).rejects.toThrow(ImapError)
+  })
+
+  it('refuses when the server has no IDLE', async () => {
+    const s = server({ folders: [{ ...inbox }] })
+    const c = await ready(s)
+    await expect(c.idle(100)).rejects.toThrow('no IDLE')
+  })
+
+  it('ignores news that is not about messages', async () => {
+    const s = idleServer()
+    const c = await ready(s)
+    const waiting = c.idle(60)
+    await settle()
+    s.announce('OK still here')
+    await expect(waiting).resolves.toBe('quiet')
+  })
+})

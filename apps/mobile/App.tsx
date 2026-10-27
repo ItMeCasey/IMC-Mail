@@ -15,6 +15,7 @@ import MailList from './src/MailList'
 import MessageView from './src/MessageView'
 import { flushOutbox } from './src/mail'
 import { rescheduleReminders, setUpNotifications } from './src/notify'
+import { resumeLive } from './src/live'
 import { startSyncLoop, syncNow } from './src/phonesync'
 import { applyPrivacy } from './src/privacy'
 import type { Screen as ScreenName, Tab } from './src/screens'
@@ -53,6 +54,7 @@ function Shell() {
     applyPrivacy()
     void setUpNotifications().then(() => rescheduleReminders())
     void scheduleBackgroundCheck()
+    void resumeLive()
     const stop = startSyncLoop()
     // Coming back to the app: sync, send anything waiting, and refresh reminders.
     const sub = AppState.addEventListener('change', (state) => {

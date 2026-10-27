@@ -47,6 +47,7 @@ export class FakeServer {
   private waitingForSasl: { tag: string } | null = null
   private appending: { tag: string; path: string; flags: string[]; n: number } | null = null
   private inbound = ''
+  private idleTag: string | null = null
 
   constructor(readonly o: FakeOptions = {}) {}
 
@@ -122,7 +123,22 @@ export class FakeServer {
     }
   }
 
+  /** Tells a client that is waiting (IDLE) about something that happened, such as `3 EXISTS`. */
+  announce(untagged: string): void {
+    if (this.idleTag) this.say(`* ${untagged}\r\n`)
+  }
+
+  /** True while a client is waiting in IDLE. */
+  get idling(): boolean {
+    return this.idleTag !== null
+  }
+
   private command(line: string): void {
+    if (this.idleTag && line.toUpperCase() === 'DONE') {
+      const tag = this.idleTag
+      this.idleTag = null
+      return this.say(`${tag} OK IDLE terminated\r\n`)
+    }
     if (this.waitingForSasl) {
       const { tag } = this.waitingForSasl
       this.waitingForSasl = null
@@ -183,6 +199,10 @@ export class FakeServer {
         this.appending = { tag: tag!, path: m[1]!.replace(/\\(.)/g, '$1'), flags: (m[2] ?? '').split(' ').filter(Boolean), n: Number(m[3]) }
         return this.say('+ ready for literal data\r\n')
       }
+      case 'IDLE':
+        if (!this.selected) return this.say(`${tag} NO select a mailbox first\r\n`)
+        this.idleTag = tag!
+        return this.say('+ idling\r\n')
       case 'LOGOUT':
         this.say(`* BYE bye\r\n${tag} OK logged out\r\n`)
         return

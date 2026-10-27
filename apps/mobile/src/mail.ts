@@ -47,7 +47,8 @@ const POP3_INBOX: Folder = { path: 'INBOX', name: 'Inbox', delimiter: null, flag
 /** A folder is saved under its path, except the inbox, which is always "inbox" (the server may call it INBOX or Inbox). */
 export const folderKey = (f: Folder): string => (f.specialUse === 'inbox' ? 'inbox' : f.path)
 
-async function openImap(account: PhoneAccount): Promise<ImapClient> {
+/** A signed-in connection of its own (not the one-at-a-time lane), for a caller that keeps it open, like live mail. */
+export async function openImap(account: PhoneAccount): Promise<ImapClient> {
   const { incoming } = serversOf(account)
   const client = new ImapClient(tcpConnect, { host: incoming.host, port: incoming.port, security: incoming.security })
   await client.open()
