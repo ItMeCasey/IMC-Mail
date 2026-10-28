@@ -2,7 +2,7 @@
   "expo": {
     "name": "IMC-Mail",
     "slug": "imc-mail",
-    "version": "2026.10.4",
+    "version": "2026.10.5",
     "scheme": [
       "imcmail",
       "com.itmecasey.imcmail"
