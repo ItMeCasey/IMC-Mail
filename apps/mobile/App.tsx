@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { AppState, BackHandler, Linking, Pressable, StyleSheet, Text, View } from 'react-native'
 import { StatusBar } from 'expo-status-bar'
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context'
-import { parseMailto, type MailtoDraft, navBack, navCanBack, navCanForward, navCurrent, navFilter, navForward, navPush, navStart, type NavHistory } from '@imc/core'
+import { parseMailto, type MailtoDraft, navBack, navCanBack, navCurrent, navFilter, navPush, navStart, type NavHistory } from '@imc/core'
 import AddAccount from './src/AddAccount'
 import Calendar from './src/Calendar'
 import { loadAccounts, type PhoneAccount } from './src/auth'
@@ -47,7 +47,6 @@ function Shell() {
 
   const go = useCallback((next: ScreenName) => setNav((h) => navPush(h, next)), [])
   const back = useCallback(() => setNav((h) => navBack(h)), [])
-  const forward = useCallback(() => setNav((h) => navForward(h)), [])
   const reload = useCallback(() => loadAccounts().then(setAccounts), [])
 
   useEffect(() => {
@@ -154,17 +153,10 @@ function Shell() {
           <Diagnostics onBack={back} />
         </Screen>
       )}
-      {navCanForward(nav) && (
-        <Pressable accessibilityRole="button" accessibilityLabel="Forward" onPress={forward} style={[st.forward, { bottom: insets.bottom + 76, left: Math.max(insets.left, 0) + 12 }]}>
-          <Text style={st.forwardText}>Forward ›</Text>
-        </Pressable>
-      )}
     </View>
   )
 }
 
 const st = StyleSheet.create({
-  root: { flex: 1, backgroundColor: colors.bg },
-  forward: { position: 'absolute', backgroundColor: colors.raised, borderRadius: 4, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.lineStrong, paddingHorizontal: 10, paddingVertical: 5 },
-  forwardText: { color: colors.link, fontSize: 13 }
+  root: { flex: 1, backgroundColor: colors.bg }
 })
