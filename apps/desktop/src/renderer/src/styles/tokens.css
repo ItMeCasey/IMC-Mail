@@ -45,7 +45,7 @@
   /* Window corner radius; the window squares off while maximized. */
   --win-radius: 6px;
   /* Clear space around the window surface where its drop shadow is drawn; none while maximized. */
-  --win-inset: 16px;
+  --win-inset: 6px;
   --tape-size: 0.5rem;
   --list-w: 26rem;
   --z-dialog: 40;

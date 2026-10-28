@@ -99,8 +99,8 @@ dialog::backdrop {
 /* The window surface: the drop shadow falls in the clear space around it (--win-inset). */
 .win-surface {
   box-shadow:
-    0 12px 32px rgb(0 0 0 / 0.5),
-    0 2px 8px rgb(0 0 0 / 0.35);
+    0 0 4px rgb(0 0 0 / 0.55),
+    0 1px 2px rgb(0 0 0 / 0.35);
 }
 html[data-maximized] .win-surface {
   box-shadow: none;
