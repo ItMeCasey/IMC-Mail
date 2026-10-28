@@ -69,6 +69,7 @@ export function sanitizeEmailHtml(
     allowedSchemesByTag: { img: ['http', 'https', 'data'] },
     allowProtocolRelative: false,
     disallowedTagsMode: 'discard',
+    nonTextTags: ['script', 'style', 'textarea', 'option', 'title'], // a message's <title> is not part of its body
     transformTags: {
       '*': (tagName, attribs) => {
         const a = { ...attribs }

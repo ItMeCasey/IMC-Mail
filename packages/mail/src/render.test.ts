@@ -21,6 +21,12 @@ describe('the page the phone shows', () => {
     expect(r.blockedImages).toBeGreaterThanOrEqual(2)
   })
 
+  it('does not show the message title as text', () => {
+    const r = sanitizeEmailHtml('<html><head><title>SoFi</title></head><body><p>Hello</p></body></html>', { allowImages: true })
+    expect(r.html).not.toContain('SoFi')
+    expect(r.html).toContain('Hello')
+  })
+
   it('lets web images through only when allowed', () => {
     expect(sanitizeEmailHtml('<img src="https://pics.example/a.png">', { allowImages: true }).html).toContain('https://pics.example/a.png')
     expect(sanitizeEmailHtml('<img src="https://pics.example/a.png">', { allowImages: false }).html).not.toContain('pics.example')
