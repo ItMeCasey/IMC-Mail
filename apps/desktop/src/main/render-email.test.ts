@@ -52,10 +52,10 @@ describe('remote images', () => {
     expect(r.html).toContain('alt="px"')
   })
 
-  it('keeps https and http images once allowed, but never protocol-relative ones', () => {
+  it('keeps https and http images once allowed, and loads protocol-relative ones over https', () => {
     const r = run(`<img src="https://a.example/x.png"><img src="//b.example/y.png">`, true)
     expect(r.html).toContain('https://a.example/x.png')
-    expect(r.html).not.toContain('b.example')
+    expect(r.html).toContain('https://b.example/y.png')
   })
 
   it('keeps safe inline data images and drops other data and unresolved cid images', () => {

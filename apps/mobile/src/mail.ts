@@ -30,13 +30,56 @@ import { tcpConnect } from './tcp'
 
 /** One connection at a time per account: servers limit how many a person may open, and it keeps the saved copy tidy. */
 const lanes = new Map<string, Promise<unknown>>()
-function inLane<T>(account: PhoneAccount, job: () => Promise<T>): Promise<T> {
-  const run = (lanes.get(account.email) ?? Promise.resolve()).then(job, job)
+function inLane<T>(key: string, job: () => Promise<T>): Promise<T> {
+  const run = (lanes.get(key) ?? Promise.resolve()).then(job, job)
   lanes.set(
-    account.email,
+    key,
     run.catch(() => undefined)
   )
   return run
+}
+
+/**
+ * Connecting and signing in costs several round trips, so a connection stays open for a minute after use and the next
+ * job reuses it. Updating folders ("sync") and reading messages ("read") each have one, so opening a message never waits
+ * behind a folder update. A connection that went stale is replaced and the job tried once more.
+ */
+const KEEP_OPEN_MS = 60_000
+const held = new Map<string, { client: ImapClient; timer: ReturnType<typeof setTimeout> | null }>()
+
+function closeHeld(key: string): void {
+  const h = held.get(key)
+  if (!h) return
+  held.delete(key)
+  if (h.timer) clearTimeout(h.timer)
+  void h.client.logout().catch(() => undefined)
+}
+
+function onImap<T>(account: PhoneAccount, role: 'sync' | 'read', fn: (c: ImapClient) => Promise<T>): Promise<T> {
+  const key = `${account.email}|${role}`
+  return inLane(key, async () => {
+    for (let attempt = 0; ; attempt++) {
+      let h = held.get(key)
+      const reused = h !== undefined
+      if (h) {
+        if (h.timer) clearTimeout(h.timer)
+        h.timer = null
+      } else {
+        h = { client: await openImap(account), timer: null }
+        held.set(key, h)
+      }
+      try {
+        const result = await fn(h.client)
+        h.timer = setTimeout(() => closeHeld(key), KEEP_OPEN_MS)
+        return result
+      } catch (e) {
+        held.delete(key)
+        h.client.abort()
+        if (reused && attempt === 0) continue
+        throw e
+      }
+    }
+  })
 }
 
 const isPop3 = (a: PhoneAccount) => a.protocol === 'pop3'
@@ -68,20 +111,13 @@ async function openPop3(account: PhoneAccount): Promise<Pop3Client> {
   return client
 }
 
-/** Runs something on a signed-in IMAP connection, and signs out afterwards. */
+/** Runs something on a signed-in IMAP connection (kept open for a minute for the next job). */
 export function withImap<T>(account: PhoneAccount, fn: (c: ImapClient) => Promise<T>): Promise<T> {
-  return inLane(account, async () => {
-    const client = await openImap(account)
-    try {
-      return await fn(client)
-    } finally {
-      await client.logout()
-    }
-  })
+  return onImap(account, 'sync', fn)
 }
 
 function withPop3<T>(account: PhoneAccount, fn: (c: Pop3Client) => Promise<T>): Promise<T> {
-  return inLane(account, async () => {
+  return inLane(account.email, async () => {
     const client = await openPop3(account)
     try {
       return await fn(client)
@@ -161,16 +197,10 @@ function downloadRaw(account: PhoneAccount, folder: Folder, summary: Summary, ma
       return c.retr(n)
     })
   }
-  // A connection of its own, so opening a message never waits behind a folder update.
-  return (async () => {
-    const c = await openImap(account)
-    try {
-      await c.select(folder.path, false)
-      return await c.fetchRaw(summary.uid, maxBytes)
-    } finally {
-      await c.logout().catch(() => undefined)
-    }
-  })()
+  return onImap(account, 'read', async (c) => {
+    await c.select(folder.path, false)
+    return c.fetchRaw(summary.uid, maxBytes)
+  })
 }
 
 /** Downloads the newest messages that are not saved yet, so opening them is instant. Quiet; errors are ignored. */
@@ -178,21 +208,16 @@ export async function prefetchBodies(account: PhoneAccount, folder: Folder, summ
   if (isPop3(account)) return
   const key = folderKey(folder)
   const todo = summaries.filter((m) => !bodies.get(account.email, key, m.uid)).slice(0, count)
-  if (todo.length === 0) return
-  try {
-    const c = await openImap(account)
+  // One message per job, so a message you open yourself goes in between rather than waiting for all of them.
+  for (const m of todo) {
     try {
-      await c.select(folder.path, false)
-      for (const m of todo) {
-        const raw = await c.fetchRaw(m.uid, MAX_MESSAGE_BYTES)
-        const message = await parseMessage(raw)
-        bodies.put(account.email, key, m.uid, { text: message.text, html: message.html, attachments: message.attachments, truncated: raw.length >= MAX_MESSAGE_BYTES })
-      }
-    } finally {
-      await c.logout().catch(() => undefined)
+      if (bodies.get(account.email, key, m.uid)) continue
+      const raw = await downloadRaw(account, folder, m, MAX_MESSAGE_BYTES)
+      const message = await parseMessage(raw)
+      bodies.put(account.email, key, m.uid, { text: message.text, html: message.html, attachments: message.attachments, truncated: raw.length >= MAX_MESSAGE_BYTES })
+    } catch {
+      return // best effort
     }
-  } catch {
-    // best effort
   }
 }
 

@@ -34,7 +34,6 @@ interface Props {
 export default function MessageView({ account, folder, summary, onBack, onCompose }: Props) {
   const [opened, setOpened] = useState<OpenedMessage | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [allowImages, setAllowImages] = useState(false)
   const [more, setMore] = useState(false)
   const [details, setDetails] = useState(false)
   const [starred, setStarred] = useState(summary.flags.includes('\\Flagged'))
@@ -62,11 +61,11 @@ export default function MessageView({ account, folder, summary, onBack, onCompos
   const page = useMemo(() => {
     if (!m) return null
     if (m.html) {
-      const r = sanitizeEmailHtml(m.html, { allowImages, defangLinks: defang })
-      return { doc: buildPhoneDocument(r.html, { allowImages, isText: false }), blocked: r.blockedImages }
+      const r = sanitizeEmailHtml(m.html, { allowImages: true, defangLinks: defang })
+      return buildPhoneDocument(r.html, { allowImages: true, isText: false })
     }
-    return { doc: buildPhoneDocument(textToHtml(m.text || '(this message has no text)', { defangLinks: defang }), { allowImages, isText: true }), blocked: 0 }
-  }, [m, allowImages, defang])
+    return buildPhoneDocument(textToHtml(m.text || '(this message has no text)', { defangLinks: defang }), { allowImages: true, isText: true })
+  }, [m, defang])
 
   const labels = useMemo(() => {
     void changed
@@ -174,7 +173,6 @@ export default function MessageView({ account, folder, summary, onBack, onCompos
             ))}
           </View>
         )}
-        {page !== null && page.blocked > 0 && !allowImages && <Link onPress={() => setAllowImages(true)}>{`Show ${page.blocked} blocked image${page.blocked === 1 ? '' : 's'} (the sender can tell you opened it)`}</Link>}
         {attachments.length > 0 && (
           <View style={st.chips}>
             {attachments.map(({ a, index }) => (
@@ -196,7 +194,7 @@ export default function MessageView({ account, folder, summary, onBack, onCompos
             <ErrorText>{error}</ErrorText>
           </View>
         )}
-        {page !== null && <MessageHtml doc={page.doc} />}
+        {page !== null && <MessageHtml doc={page} />}
       </View>
 
       <Sheet open={more} onClose={() => setMore(false)}>

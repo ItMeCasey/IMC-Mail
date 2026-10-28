@@ -72,7 +72,7 @@ describe('MessageService', () => {
     expect(remote.fetchSource).toHaveBeenCalledTimes(1)
     expect(remote.fetchSource).toHaveBeenCalledWith(account, 'INBOX', 1, expect.any(Number))
     const d = await svc.loadBody(id)
-    expect(d).toMatchObject({ bodyState: 'ready', blockedImages: 1, snippet: 'Hi there' })
+    expect(d).toMatchObject({ bodyState: 'ready', blockedImages: 0, snippet: 'Hi there' })
   })
 
   it('reports a failed download as an error state instead of throwing from open()', async () => {

@@ -86,10 +86,12 @@ export function sanitizeEmailHtml(
         if (tagName === 'img') {
           const src = (a['src'] ?? '').trim()
           if (REMOTE_URL.test(src) || src.startsWith('//')) {
-            if (!opts.allowImages || src.startsWith('//')) {
+            if (!opts.allowImages) {
               onBlocked()
               a['src'] = ''
               a['data-blocked'] = '1'
+            } else if (src.startsWith('//')) {
+              a['src'] = `https:${src}`
             }
           } else if (src.startsWith('data:')) {
             if (!SAFE_DATA_IMAGE.test(src)) a['src'] = ''

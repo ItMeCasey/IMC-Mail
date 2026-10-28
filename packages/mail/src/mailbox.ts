@@ -17,6 +17,8 @@ export interface MailCache {
   setFolderState(account: string, folder: string, state: FolderState): Promise<void>
   /** Every saved message of the folder, newest first. */
   summaries(account: string, folder: string): Promise<Summary[]>
+  /** Just each saved message's uid and flags: all a sync needs, and far cheaper than `summaries` on a big folder. */
+  index?(account: string, folder: string): Promise<{ uid: number; flags: string[] }[]>
   upsert(account: string, folder: string, list: Summary[]): Promise<void>
   setFlags(account: string, folder: string, flags: Map<number, string[]>): Promise<void>
   remove(account: string, folder: string, uids: number[]): Promise<void>
@@ -58,7 +60,7 @@ export async function syncFolder(client: Reader, cache: MailCache, account: stri
 
   const onServer = await client.searchUids()
   const present = new Set(onServer)
-  const saved = reset ? [] : await cache.summaries(account, key)
+  const saved: { uid: number; flags: string[] }[] = reset ? [] : cache.index ? await cache.index(account, key) : await cache.summaries(account, key)
   const have = new Map(saved.map((m) => [m.uid, m]))
 
   const gone = saved.filter((m) => !present.has(m.uid)).map((m) => m.uid)

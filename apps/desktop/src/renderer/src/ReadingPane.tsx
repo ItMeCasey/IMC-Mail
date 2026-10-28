@@ -184,13 +184,7 @@ function MessageBlock({
   onNeedBody: () => void
 }) {
   const qc = useQueryClient()
-  const [showImages, setShowImages] = useState(false)
   const [linksOn, setLinksOn] = useState(false)
-  const allowImages = showImages || m.imagesAllowed
-  const always = useMutation({
-    mutationFn: () => window.imc.invoke('senders:allowImages', { address: m.fromAddr }),
-    onSuccess: () => void qc.invalidateQueries()
-  })
   const Chevron = open ? ChevronDown : ChevronRight
 
   return (
@@ -241,24 +235,8 @@ function MessageBlock({
 
           {m.invite && <InviteCard messageId={m.id} invite={m.invite} />}
 
-          {m.bodyState === 'ready' && m.blockedImages > 0 && !allowImages && (
-            <div className="flex flex-wrap items-center gap-2 rounded-md border border-line-strong px-3 py-2 text-sm">
-              <ImageOff size={16} strokeWidth={1.75} aria-hidden className="shrink-0 text-ink-2" />
-              <span className="flex-1 text-ink-2">
-                {m.blockedImages} remote {m.blockedImages === 1 ? 'image is' : 'images are'} hidden
-                to keep the sender from seeing when you read this.
-              </span>
-              <button className={textBtn} onClick={() => setShowImages(true)}>
-                Show images
-              </button>
-              <button className={textBtn} onClick={() => always.mutate()}>
-                Always for this sender
-              </button>
-            </div>
-          )}
-
           {m.bodyState === 'ready' && (
-            <EmailFrame id={m.id} allowImages={allowImages} allowLinks={linksOn} title={`Message from ${m.fromName || m.fromAddr}`} />
+            <EmailFrame id={m.id} allowImages allowLinks={linksOn} title={`Message from ${m.fromName || m.fromAddr}`} />
           )}
           {m.bodyState === 'missing' && <p className="text-sm text-ink-3">Downloading…</p>}
           {m.bodyState === 'error' && (

@@ -120,6 +120,9 @@ export function messageCache(db: SqlDb): MailCache & { recent(account: string, f
     async summaries(account, folder) {
       return db.all<Row>('SELECT * FROM message WHERE account = ? AND folder = ? ORDER BY uid DESC', account, folder).map(toSummary)
     },
+    async index(account, folder) {
+      return db.all<{ uid: number; flags: string }>('SELECT uid, flags FROM message WHERE account = ? AND folder = ?', account, folder).map((r) => ({ uid: r.uid, flags: JSON.parse(r.flags) as string[] }))
+    },
     async recent(account, folder, limit) {
       return db.all<Row>('SELECT * FROM message WHERE account = ? AND folder = ? ORDER BY uid DESC LIMIT ?', account, folder, limit).map(toSummary)
     },

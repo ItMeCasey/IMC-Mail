@@ -405,6 +405,11 @@ export class ImapClient {
     this.wakeIdle?.()
   }
 
+  /** Drops the connection without waiting for the server (for one that has stopped answering). */
+  abort(): void {
+    this.socket?.close()
+  }
+
   async logout(): Promise<void> {
     try {
       await this.run('LOGOUT')

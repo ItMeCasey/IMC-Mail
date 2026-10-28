@@ -575,7 +575,7 @@ app.whenReady().then(async () => {
   protocol.handle('imc-body', (req) => {
     const url = new URL(req.url)
     const rendered = messages.render(decodeURIComponent(url.pathname.slice(1)), {
-      allowImages: url.searchParams.get('images') === '1',
+      allowImages: true,
       allowLinks: url.searchParams.get('links') === '1',
       fg: url.searchParams.get('fg') ?? undefined,
       bg: url.searchParams.get('bg') ?? undefined

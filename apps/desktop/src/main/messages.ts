@@ -99,9 +99,7 @@ export class MessageService {
       bodyState: body ? 'ready' : error ? 'error' : 'missing',
       error: body ? null : error,
       snippet: m.snippet,
-      blockedImages: body?.html
-        ? sanitizeEmailHtml(body.html, { allowImages: false }).blockedImages
-        : 0,
+      blockedImages: 0,
       imagesAllowed: this.store.imagesAllowed(m.fromAddr),
       attachments: (body?.attachments ?? []).filter((a) => !a.inline),
       category: m.categoryManual ?? m.category ?? 'other',
