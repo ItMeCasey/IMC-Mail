@@ -138,7 +138,7 @@ export default function WindowFrame({ children }: { children: React.ReactNode })
   }, [apply])
 
   return (
-    <div className={`relative h-full overflow-hidden bg-sheet ${maximized ? '' : 'rounded-(--win-radius)'}`}>
+    <div className={`win-surface relative h-full overflow-hidden bg-sheet ${maximized ? '' : 'rounded-(--win-radius)'}`}>
       <div className="flex h-full flex-col">
         <TitleBar maximized={maximized} />
         <div className="relative min-h-0 flex-1">{children}</div>

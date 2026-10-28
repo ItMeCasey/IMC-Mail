@@ -8,6 +8,11 @@ body,
   height: 100%;
 }
 
+#root {
+  box-sizing: border-box;
+  padding: var(--win-inset);
+}
+
 body {
   margin: 0;
   /* The window is transparent; WindowFrame paints the rounded surface. */
@@ -85,10 +90,22 @@ dialog::backdrop {
   background: var(--scrim);
   /* Follows the window's rounded corners instead of covering the transparent corner pixels. */
   border-radius: var(--win-radius);
+  /* Stay on the window surface, not the clear space around it that holds the shadow. */
+  margin: var(--win-inset);
 }
 }
 
 @layer components {
+/* The window surface: the drop shadow falls in the clear space around it (--win-inset). */
+.win-surface {
+  box-shadow:
+    0 12px 32px rgb(0 0 0 / 0.5),
+    0 2px 8px rgb(0 0 0 / 0.35);
+}
+html[data-maximized] .win-surface {
+  box-shadow: none;
+}
+
 /* Stand-in for hidden text while stream-safe mode is on: a flat bar the length of the text. */
 .redacted {
   display: inline-block;

@@ -605,7 +605,7 @@ export default function SettingsWindow() {
   }
 
   return (
-    <div role="dialog" aria-labelledby="settings-title" className="relative flex h-full flex-col overflow-hidden rounded-(--win-radius) bg-raised text-ink">
+    <div role="dialog" aria-labelledby="settings-title" className="win-surface relative flex h-full flex-col overflow-hidden rounded-(--win-radius) bg-raised text-ink">
       <header className="flex h-10 shrink-0 items-center border-b border-line bg-rail" style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}>
         <h2 id="settings-title" className="flex-1 px-4 text-sm font-medium text-ink-2 select-none">
           Settings
