@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Linking, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, useWindowDimensions, type ScrollViewInstance } from 'react-native'
+import { Animated, Linking, PanResponder, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, useWindowDimensions, type ScrollViewInstance } from 'react-native'
 import { dayKey, groupByDayOf, monthGrid, placeDay, weekOf } from '@imc/core'
 import { appPrefs, meetingsBetween, type Occurrence } from '@imc/mail'
 import { holidaysBetween } from '@imc/mail/holidays'
@@ -138,6 +138,7 @@ export default function Calendar() {
       </View>
 
       {(mode === 'day' || mode === 'week') && (
+        <Swipe axis="x" onStep={step}>
         <TimeGrid
           days={mode === 'day' ? [anchor] : weekOf(anchor)}
           byDay={data.byDay}
@@ -150,8 +151,13 @@ export default function Calendar() {
           onPickDay={pickDay}
           onPick={setOpen}
         />
+        </Swipe>
       )}
-      {mode === 'month' && <MonthView anchor={anchor} byDay={data.byDay} holidayBy={data.holidayBy} today={today} tone={tone} refreshing={refreshing} onRefresh={() => void refresh()} onPickDay={pickDay} />}
+      {mode === 'month' && (
+        <Swipe axis="y" onStep={step}>
+          <MonthView anchor={anchor} byDay={data.byDay} holidayBy={data.holidayBy} today={today} tone={tone} refreshing={refreshing} onRefresh={() => void refresh()} onPickDay={pickDay} />
+        </Swipe>
+      )}
       {mode === 'agenda' && <AgendaView days={Array.from({ length: AGENDA_DAYS }, (_, i) => addDays(anchor, i))} byDay={data.byDay} holidayBy={data.holidayBy} tone={tone} refreshing={refreshing} onRefresh={() => void refresh()} onPick={setOpen} />}
 
       <Sheet open={open !== null} onClose={() => setOpen(null)}>
@@ -170,6 +176,55 @@ export default function Calendar() {
         <MenuLabel>Meetings come from your other devices</MenuLabel>
       </Sheet>
     </View>
+  )
+}
+
+/**
+ * Swiping moves to the next or previous period with a slide. Month swipes up and down (it fits on one screen); day and
+ * week swipe sideways, since up and down is how their hours scroll.
+ */
+function Swipe({ axis, onStep, children }: { axis: 'x' | 'y'; onStep: (dir: 1 | -1) => void; children: React.ReactNode }) {
+  const { width, height } = useWindowDimensions()
+  const reach = (axis === 'y' ? height : width) * 0.3
+  const pos = useRef(new Animated.Value(0)).current
+  const busy = useRef(false)
+  const stepRef = useRef(onStep)
+  stepRef.current = onStep
+
+  const go = (dir: 1 | -1) => {
+    if (busy.current) return
+    busy.current = true
+    Animated.timing(pos, { toValue: -dir * reach, duration: 110, useNativeDriver: true }).start(() => {
+      stepRef.current(dir)
+      pos.setValue(dir * reach)
+      Animated.timing(pos, { toValue: 0, duration: 180, useNativeDriver: true }).start(() => {
+        busy.current = false
+      })
+    })
+  }
+  const goRef = useRef(go)
+  goRef.current = go
+
+  const pan = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponderCapture: (_, g) => {
+        const main = axis === 'y' ? g.dy : g.dx
+        const cross = axis === 'y' ? g.dx : g.dy
+        return Math.abs(main) > 14 && Math.abs(main) > Math.abs(cross) * 2
+      },
+      onPanResponderRelease: (_, g) => {
+        const main = axis === 'y' ? g.dy : g.dx
+        const speed = axis === 'y' ? g.vy : g.vx
+        if (Math.abs(main) < 50 && Math.abs(speed) < 0.5) return
+        goRef.current(main < 0 ? 1 : -1) // swipe up (or left) goes forward in time
+      }
+    })
+  ).current
+
+  return (
+    <Animated.View {...pan.panHandlers} style={{ flex: 1, opacity: pos.interpolate({ inputRange: [-reach, 0, reach], outputRange: [0, 1, 0] }), transform: [axis === 'y' ? { translateY: pos } : { translateX: pos }] }}>
+      {children}
+    </Animated.View>
   )
 }
 
