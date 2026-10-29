@@ -41,11 +41,11 @@ function inLane<T>(key: string, job: () => Promise<T>): Promise<T> {
 }
 
 /**
- * Connecting and signing in costs several round trips, so a connection stays open for a minute after use and the next
+ * Connecting and signing in costs several round trips, so a connection stays open for a few minutes after use and the next
  * job reuses it. Updating folders ("sync") and reading messages ("read") each have one, so opening a message never waits
  * behind a folder update. A connection that went stale is replaced and the job tried once more.
  */
-const KEEP_OPEN_MS = 60_000
+const KEEP_OPEN_MS = 240_000
 const held = new Map<string, { client: ImapClient; timer: ReturnType<typeof setTimeout> | null }>()
 
 function closeHeld(key: string): void {
@@ -207,15 +207,21 @@ function downloadRaw(account: PhoneAccount, folder: Folder, summary: Summary, ma
   })
 }
 
+/** Opens the account's reading connection ahead of time, so the first message you open does not wait for it. Quiet. */
+export function warmConnection(account: PhoneAccount): void {
+  if (isPop3(account)) return
+  void onImap(account, 'read', (c) => c.select('INBOX', false)).catch(() => undefined)
+}
+
 /** Downloads the newest messages that are not saved yet, so opening them is instant. Quiet; errors are ignored. */
-export async function prefetchBodies(account: PhoneAccount, folder: Folder, summaries: Summary[], count = 6): Promise<void> {
+export async function prefetchBodies(account: PhoneAccount, folder: Folder, summaries: Summary[], count = 10): Promise<void> {
   if (isPop3(account)) return
   const key = folderKey(folder)
-  const todo = summaries.filter((m) => !bodies.get(account.email, key, m.uid)).slice(0, count)
+  const todo = summaries.slice(0, 40).filter((m) => !bodies.has(account.email, key, m.uid)).slice(0, count)
   // One message per job, so a message you open yourself goes in between rather than waiting for all of them.
   for (const m of todo) {
     try {
-      if (bodies.get(account.email, key, m.uid)) continue
+      if (bodies.has(account.email, key, m.uid)) continue
       const raw = await downloadRaw(account, folder, m, MAX_MESSAGE_BYTES)
       const message = await parseMessage(raw)
       bodies.put(account.email, key, m.uid, { text: message.text, html: message.html, attachments: message.attachments, truncated: raw.length >= MAX_MESSAGE_BYTES })

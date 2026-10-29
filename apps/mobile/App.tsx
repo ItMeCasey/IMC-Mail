@@ -16,7 +16,7 @@ import MailList from './src/MailList'
 import UnifiedList, { ALL_INBOXES } from './src/UnifiedList'
 import MessageView from './src/MessageView'
 import { INBOX } from './src/inbox-check'
-import { flushOutbox, savedFolders, savedMessages } from './src/mail'
+import { flushOutbox, savedFolders, savedMessages, warmConnection } from './src/mail'
 import { rescheduleReminders, setUpNotifications } from './src/notify'
 import { resumeLive } from './src/live'
 import { startSyncLoop, syncNow } from './src/phonesync'
@@ -138,6 +138,10 @@ function Shell() {
 
   // After the last step of a flow (sending, adding), return to where it was started.
   const finish = useCallback(() => setNav((h) => navBack(h)), [])
+
+  useEffect(() => {
+    for (const a of accounts) warmConnection(a)
+  }, [accounts])
 
   // Screens of an account that was removed must not be reachable by Back or Forward.
   useEffect(() => {

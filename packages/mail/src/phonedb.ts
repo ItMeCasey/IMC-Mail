@@ -190,6 +190,9 @@ export function bodyCache(db: SqlDb, now: () => number = Date.now) {
       const r = db.first<{ text: string; html: string | null; attachments: string; truncated: number }>('SELECT text, html, attachments, truncated FROM body WHERE account = ? AND folder = ? AND uid = ?', account, folder, uid)
       return r ? { text: r.text, html: r.html, attachments: JSON.parse(r.attachments) as AttachmentInfo[], truncated: r.truncated === 1 } : null
     },
+    has(account: string, folder: string, uid: number): boolean {
+      return db.first<{ one: number }>('SELECT 1 AS one FROM body WHERE account = ? AND folder = ? AND uid = ?', account, folder, uid) !== null
+    },
     put(account: string, folder: string, uid: number, b: CachedBody): void {
       db.transaction(() => {
         db.run(

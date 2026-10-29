@@ -7,7 +7,7 @@ import { useChanged } from './changes'
 import { AppBar, Avatar, CloseIcon, Fab, IconButton, MenuIcon, MenuItem, MenuLabel, SearchIcon, Sheet } from './chrome'
 import { items, settings } from './db'
 import { checkInbox, INBOX } from './inbox-check'
-import { actOn, lastSynced, savedFolders, savedMessages } from './mail'
+import { actOn, lastSynced, prefetchBodies, savedFolders, savedMessages } from './mail'
 import { notifyNewMail } from './notify'
 import { describeError, when } from './screens'
 import { colors, ErrorText, Link, Note, radius, tapeFor } from './ui'
@@ -56,7 +56,9 @@ export default function UnifiedList({ accounts, onSelect, onOpen, onCompose, onA
   const load = useCallback(
     async (force: boolean) => {
       setError(null)
-      setRows(await read())
+      const first = await read()
+      setRows(first)
+      for (const a of accounts) void prefetchBodies(a, inboxOf(a), first.filter((r) => r.account.email === a.email).map((r) => r.m))
       const stale: PhoneAccount[] = []
       for (const a of accounts) {
         const last = await lastSynced(a, inboxOf(a))
