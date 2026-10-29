@@ -21,15 +21,13 @@ TaskManager.defineTask(TASK, async () => {
     const accounts = await loadAccounts()
     await flushOutbox(accounts).catch(() => 0)
     if (settings.get().checkMailInBackground) {
-      const found: Summary[] = []
       for (const account of accounts) {
         try {
-          found.push(...(await checkInbox(account)))
+          await notifyNewMail(await checkInbox(account), account.email)
         } catch {
           // One account being unreachable should not stop the others.
         }
       }
-      await notifyNewMail(found)
     }
     await rescheduleReminders()
     void tell({ background: 'ok' })

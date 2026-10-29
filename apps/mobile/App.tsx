@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { AppState, BackHandler, Linking, Pressable, StyleSheet, Text, View } from 'react-native'
+import * as Notifications from 'expo-notifications'
 import { StatusBar } from 'expo-status-bar'
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { parseMailto, type MailtoDraft, navBack, navCanBack, navCurrent, navFilter, navPush, navStart, type NavHistory } from '@imc/core'
@@ -14,7 +15,8 @@ import Diagnostics from './src/Diagnostics'
 import MailList from './src/MailList'
 import UnifiedList, { ALL_INBOXES } from './src/UnifiedList'
 import MessageView from './src/MessageView'
-import { flushOutbox } from './src/mail'
+import { INBOX } from './src/inbox-check'
+import { flushOutbox, savedFolders, savedMessages } from './src/mail'
 import { rescheduleReminders, setUpNotifications } from './src/notify'
 import { resumeLive } from './src/live'
 import { startSyncLoop, syncNow } from './src/phonesync'
@@ -100,6 +102,33 @@ function Shell() {
     go({ name: 'compose', account, start: { to: incoming.to.join(', '), cc: incoming.cc.join(', '), bcc: incoming.bcc.join(', '), subject: incoming.subject, text: incoming.body, inReplyTo: null, references: [] } })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [incoming, accounts])
+
+  // Tapping a notification opens what it is about: the new message, or that account's inbox when there were several.
+  const [tapped, setTapped] = useState<{ account: string; uid: number | null } | null>(null)
+  const lastTap = Notifications.useLastNotificationResponse()
+  useEffect(() => {
+    if (!lastTap) return
+    const d = lastTap.notification.request.content.data as { kind?: string; account?: string; uid?: number | null }
+    if (d.kind === 'mail' && d.account) setTapped({ account: d.account, uid: d.uid ?? null })
+    else if (d.kind === 'meeting' || d.kind === 'holiday') go({ name: 'tab', tab: 'calendar' })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastTap])
+  useEffect(() => {
+    if (!tapped || accounts.length === 0) return
+    const account = accounts.find((a) => a.email === tapped.account)
+    setTapped(null)
+    if (!account) return
+    void (async () => {
+      const folder = savedFolders(account).find((f) => f.specialUse === 'inbox') ?? INBOX
+      const summary = tapped.uid === null ? undefined : (await savedMessages(account, folder)).find((x) => x.uid === tapped.uid)
+      if (summary) go({ name: 'message', account, folder, summary })
+      else {
+        setMailSel({ account: account.email, folder: null })
+        go({ name: 'tab', tab: 'mail' })
+      }
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tapped, accounts])
 
   const added = async (a: PhoneAccount) => {
     await reload()

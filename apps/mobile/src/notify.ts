@@ -63,7 +63,7 @@ export async function rescheduleReminders(now = Date.now()): Promise<number> {
 }
 
 /** Tells the person about new mail, one notification for a burst. Details are left out if they chose that. */
-export async function notifyNewMail(messages: Summary[], now = Date.now()): Promise<void> {
+export async function notifyNewMail(messages: Summary[], account: string, now = Date.now()): Promise<void> {
   if (messages.length === 0) return
   const prefs = notificationPrefs(items)
   if (!prefs.enabled || inQuietHours(prefs.quietHours, now)) return
@@ -73,7 +73,7 @@ export async function notifyNewMail(messages: Summary[], now = Date.now()): Prom
   const who = first.from?.name || first.from?.address || 'Someone'
   const title = hide ? 'IMC-Mail' : messages.length === 1 ? who : `${messages.length} new messages`
   const body = hide ? (messages.length === 1 ? 'New message' : `${messages.length} new messages`) : messages.length === 1 ? first.subject || '(no subject)' : [...new Set(messages.map((m) => m.from?.name || m.from?.address || 'someone'))].slice(0, 3).join(', ')
-  await Notifications.scheduleNotificationAsync({ content: { title, body, data: { kind: 'mail' } }, trigger: { channelId: MAIL } })
+  await Notifications.scheduleNotificationAsync({ content: { title, body, data: { kind: 'mail', account, uid: messages.length === 1 ? first.uid : null } }, trigger: { channelId: MAIL } })
 }
 
 /** Which mail may notify, by the kinds the person chose on any device (everything, when streamer features are off). */

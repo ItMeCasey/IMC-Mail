@@ -68,7 +68,7 @@ export default function UnifiedList({ accounts, onSelect, onOpen, onCompose, onA
       await Promise.all(
         stale.map(async (a) => {
           try {
-            void notifyNewMail(await checkInbox(a))
+            void notifyNewMail(await checkInbox(a), a.email)
           } catch (e) {
             failures.push(`${a.email}: ${describeError(e)}`)
           }

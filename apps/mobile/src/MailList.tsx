@@ -7,6 +7,7 @@ import { notifyChanged, useChanged } from './changes'
 import { ALL_INBOXES } from './UnifiedList'
 import { AppBar, Avatar, CloseIcon, Fab, IconButton, MenuIcon, MenuItem, MenuLabel, SearchIcon, Sheet } from './chrome'
 import { items, settings } from './db'
+import { stamp } from './perf'
 import { actOn, folderKey, lastSynced, prefetchBodies, refreshFolder, refreshFolders, savedFolders, savedMessages } from './mail'
 import { mailAllowed, notifyNewMail } from './notify'
 import { describeError, newId, when } from './screens'
@@ -64,8 +65,10 @@ export default function MailList({ accounts, selected, onSelect, onOpen, onCompo
     async (force: boolean) => {
       if (!account || !folder) return
       setError(null)
+      const t0 = Date.now()
       const before = await savedMessages(account, folder)
       setList(before)
+      const t1 = stamp(`list: read ${before.length} saved`, t0)
       const last = await lastSynced(account, folder)
       setSyncedAt(last)
       if (!force && last !== null && Date.now() - last < FRESH_MS) return
@@ -74,10 +77,11 @@ export default function MailList({ accounts, selected, onSelect, onOpen, onCompo
         const known = savedFolders(account)
         if (known.length <= 1 && account.protocol !== 'pop3') setFolders(await refreshFolders(account))
         await refreshFolder(account, folder)
+        stamp('list: refresh from server', t1)
         const after = await savedMessages(account, folder)
         setList(after)
         setSyncedAt(await lastSynced(account, folder))
-        if (folder.specialUse === 'inbox') void notifyNewMail(newMailToNotify(last === null ? null : before, after, { now: Date.now(), allowed: mailAllowed() }))
+        if (folder.specialUse === 'inbox') void notifyNewMail(newMailToNotify(last === null ? null : before, after, { now: Date.now(), allowed: mailAllowed() }), account.email)
         void tell({ folder: account.provider, count: after.length })
         void prefetchBodies(account, folder, after)
       } catch (e) {

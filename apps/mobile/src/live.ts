@@ -43,7 +43,7 @@ async function watch(account: PhoneAccount): Promise<void> {
         const news = await client.idle(IDLE_MS)
         if (news === 'changed' && running) {
           const found = await checkInbox(account)
-          void notifyNewMail(found)
+          void notifyNewMail(found, account.email)
           notifyChanged()
           void tell({ live: account.provider, news: found.length })
           // The refresh used its own connection; this one may have missed changes meanwhile, so look again.

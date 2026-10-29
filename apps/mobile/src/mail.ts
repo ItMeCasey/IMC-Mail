@@ -21,6 +21,7 @@ import {
 } from '@imc/mail'
 import { credentials, serversOf, type PhoneAccount } from './auth'
 import { bodies, cache, folders as folderCache, queue } from './db'
+import { stamp } from './perf'
 import { tell } from './report'
 import { tcpConnect } from './tcp'
 
@@ -181,8 +182,11 @@ export async function readMessage(account: PhoneAccount, folder: Folder, summary
     void markRead(account, folder, summary).catch(() => undefined) // best effort; offline is fine
     return { message: saved, truncated: saved.truncated, fromCache: true, rawBytes: 0 }
   }
+  const t0 = Date.now()
   const raw = toBytes(await downloadRaw(account, folder, summary, MAX_MESSAGE_BYTES))
+  const t1 = stamp(`message: download ${raw.length} bytes`, t0)
   const message = await parseMessage(raw)
+  stamp('message: parse', t1)
   const truncated = raw.length >= MAX_MESSAGE_BYTES
   bodies.put(account.email, key, summary.uid, { text: message.text, html: message.html, attachments: message.attachments, truncated })
   void markRead(account, folder, summary).catch(() => undefined)

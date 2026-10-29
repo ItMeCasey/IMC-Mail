@@ -146,6 +146,8 @@ export function buildPhoneDocument(bodyHtml: string, o: PhoneDocumentOptions): s
   const look = o.isText
     ? `html{background:#101418;color:#e4e8ee}body{white-space:pre-wrap;font:15px/1.5 sans-serif}a{color:#8ab4f8}`
     : `html{background:#fff;color:#111}body{font:15px/1.5 sans-serif}a{color:#1a47c7}`
-  const style = `*{box-sizing:border-box}body{margin:0;padding:12px;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}pre{white-space:pre-wrap}a[data-defanged]{text-decoration:line-through}img[data-blocked]{display:inline-block;min-width:24px;min-height:24px;outline:1px dashed #8a8a8a}${look}`
+  // Newsletters are laid out for 600px or wider; on a phone everything is held to the screen's width so nothing needs pinching.
+  const fit = o.isText ? '' : `*{max-width:100%!important;min-width:0!important}table{width:100%!important}`
+  const style = `*{box-sizing:border-box}html{-webkit-text-size-adjust:100%}body{margin:0;padding:12px;overflow-wrap:anywhere;overflow-x:hidden}img{max-width:100%;height:auto}table{max-width:100%}pre{white-space:pre-wrap}${fit}a[data-defanged]{text-decoration:line-through}img[data-blocked]{display:inline-block;min-width:24px;min-height:24px;outline:1px dashed #8a8a8a}${look}`
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="${csp}"><style>${style}</style></head><body>${bodyHtml}</body></html>`
 }

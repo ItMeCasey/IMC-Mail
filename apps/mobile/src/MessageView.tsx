@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { stamp } from './perf'
 import { ActivityIndicator, Alert, Pressable, StyleSheet, Text, View } from 'react-native'
 import * as Sharing from 'expo-sharing'
 import { assess } from '@imc/core'
@@ -58,13 +59,19 @@ export default function MessageView({ account, folder, summary, onBack, onCompos
   const risk = useMemo(() => (m ? assess({ fromAddr: summary.from?.address ?? '', fromName: summary.from?.name ?? '', subject: summary.subject, text: m.text }) : null), [m, summary])
   const defang = risk?.level === 'danger'
 
-  const page = useMemo(() => {
-    if (!m) return null
-    if (m.html) {
-      const r = sanitizeEmailHtml(m.html, { allowImages: true, defangLinks: defang })
-      return buildPhoneDocument(r.html, { allowImages: true, isText: false })
-    }
-    return buildPhoneDocument(textToHtml(m.text || '(this message has no text)', { defangLinks: defang }), { allowImages: true, isText: true })
+  // The page is built after the header is on screen, so opening a message feels instant even when the body is big.
+  const [page, setPage] = useState<string | null>(null)
+  useEffect(() => {
+    if (!m) return
+    const timer = setTimeout(() => {
+      const t0 = Date.now()
+      const doc = m.html
+        ? buildPhoneDocument(sanitizeEmailHtml(m.html, { allowImages: true, defangLinks: defang }).html, { allowImages: true, isText: false })
+        : buildPhoneDocument(textToHtml(m.text || '(this message has no text)', { defangLinks: defang }), { allowImages: true, isText: true })
+      stamp(`message: build page (${m.html ? m.html.length : m.text.length} chars)`, t0)
+      setPage(doc)
+    }, 0)
+    return () => clearTimeout(timer)
   }, [m, defang])
 
   const labels = useMemo(() => {
