@@ -8,7 +8,7 @@ import { ALL_INBOXES } from './UnifiedList'
 import { AppBar, Avatar, CloseIcon, Fab, IconButton, MenuIcon, MenuItem, MenuLabel, SearchIcon, Sheet } from './chrome'
 import { items, settings } from './db'
 import { stamp } from './perf'
-import { actOn, folderKey, lastSynced, prefetchBodies, refreshFolder, refreshFolders, savedFolders, savedMessages } from './mail'
+import { actOn, folderKey, lastSynced, prefetchBodies, refreshFolder, refreshFolders, savedFolders, savedMessages, SHOWN_MESSAGES } from './mail'
 import { mailAllowed, notifyNewMail } from './notify'
 import { describeError, newId, when } from './screens'
 import { tell } from './report'
@@ -48,6 +48,7 @@ export default function MailList({ accounts, selected, onSelect, onOpen, onCompo
   const [folders, setFolders] = useState<Folder[]>([])
   const folder = folders.find((f) => folderKey(f) === selected.folder) ?? folders.find((f) => f.specialUse === 'inbox') ?? folders[0]
   const [list, setList] = useState<Summary[] | null>(null)
+  const [limit, setLimit] = useState(SHOWN_MESSAGES)
   const [query, setQuery] = useState('')
   const [searching, setSearching] = useState(false)
   const [menu, setMenu] = useState(false)
@@ -66,7 +67,7 @@ export default function MailList({ accounts, selected, onSelect, onOpen, onCompo
       if (!account || !folder) return
       setError(null)
       const t0 = Date.now()
-      const before = await savedMessages(account, folder)
+      const before = await savedMessages(account, folder, limit)
       setList(before)
       const t1 = stamp(`list: read ${before.length} saved`, t0)
       const last = await lastSynced(account, folder)
@@ -78,7 +79,7 @@ export default function MailList({ accounts, selected, onSelect, onOpen, onCompo
         if (known.length <= 1 && account.protocol !== 'pop3') setFolders(await refreshFolders(account))
         await refreshFolder(account, folder)
         stamp('list: refresh from server', t1)
-        const after = await savedMessages(account, folder)
+        const after = await savedMessages(account, folder, limit)
         setList(after)
         setSyncedAt(await lastSynced(account, folder))
         if (folder.specialUse === 'inbox') void notifyNewMail(newMailToNotify(last === null ? null : before, after, { now: Date.now(), allowed: mailAllowed() }), account.email)
@@ -90,7 +91,7 @@ export default function MailList({ accounts, selected, onSelect, onOpen, onCompo
         setRefreshing(false)
       }
     },
-    [account, folder]
+    [account, folder, limit]
   )
 
   useEffect(() => void load(false), [load])
@@ -141,7 +142,7 @@ export default function MailList({ accounts, selected, onSelect, onOpen, onCompo
     } catch (e) {
       setError(describeError(e))
     }
-    setList(await savedMessages(account, folder))
+    setList(await savedMessages(account, folder, limit))
   }
 
   if (!account) {
@@ -212,6 +213,8 @@ export default function MailList({ accounts, selected, onSelect, onOpen, onCompo
       <FlatList
         data={shown}
         keyExtractor={(m) => String(m.uid)}
+        onEndReached={() => list && list.length >= limit && setLimit((l) => l + SHOWN_MESSAGES)}
+        onEndReachedThreshold={1.5}
         initialNumToRender={12}
         maxToRenderPerBatch={8}
         windowSize={7}

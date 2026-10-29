@@ -148,7 +148,8 @@ export async function refreshFolders(account: PhoneAccount): Promise<Folder[]> {
 /** How many of a folder's newest saved messages the lists show: reading and parsing thousands of rows is what made them slow. */
 export const SHOWN_MESSAGES = 300
 
-export const savedMessages = (account: PhoneAccount, folder: Folder): Promise<Summary[]> => cache.recent(account.email, folderKey(folder), SHOWN_MESSAGES)
+/** A folder's newest saved messages, `limit` of them; the lists ask for more as you scroll to the end. */
+export const savedMessages = (account: PhoneAccount, folder: Folder, limit = SHOWN_MESSAGES): Promise<Summary[]> => cache.recent(account.email, folderKey(folder), limit)
 
 export async function lastSynced(account: PhoneAccount, folder: Folder): Promise<number | null> {
   return (await cache.folderState(account.email, folderKey(folder)))?.syncedAt ?? null

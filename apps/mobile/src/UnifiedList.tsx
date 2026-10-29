@@ -7,7 +7,7 @@ import { useChanged } from './changes'
 import { AppBar, Avatar, CloseIcon, Fab, IconButton, MenuIcon, MenuItem, MenuLabel, SearchIcon, Sheet } from './chrome'
 import { items, settings } from './db'
 import { checkInbox, INBOX } from './inbox-check'
-import { actOn, lastSynced, prefetchBodies, savedFolders, savedMessages } from './mail'
+import { actOn, lastSynced, prefetchBodies, savedFolders, savedMessages, SHOWN_MESSAGES } from './mail'
 import { notifyNewMail } from './notify'
 import { describeError, when } from './screens'
 import { colors, ErrorText, Link, Note, radius, tapeFor } from './ui'
@@ -15,7 +15,6 @@ import { colors, ErrorText, Link, Note, radius, tapeFor } from './ui'
 /** Coming back within this long of the last update does not ask the servers again; pulling down always does. */
 const FRESH_MS = 60_000
 /** The most messages shown: the newest across all accounts. */
-const MAX_ROWS = 300
 
 export const ALL_INBOXES = '*'
 
@@ -39,6 +38,7 @@ interface Props {
 export default function UnifiedList({ accounts, onSelect, onOpen, onCompose, onAddAccount }: Props) {
   const changed = useChanged()
   const [rows, setRows] = useState<Row[] | null>(null)
+  const [limit, setLimit] = useState(SHOWN_MESSAGES)
   const [query, setQuery] = useState('')
   const [searching, setSearching] = useState(false)
   const [menu, setMenu] = useState(false)
@@ -49,9 +49,9 @@ export default function UnifiedList({ accounts, onSelect, onOpen, onCompose, onA
   const tone = (a: PhoneAccount) => colors.tape[Math.max(0, accounts.findIndex((x) => x.email === a.email)) % colors.tape.length]!
 
   const read = useCallback(async (): Promise<Row[]> => {
-    const lists = await Promise.all(accounts.map(async (account) => (await savedMessages(account, inboxOf(account))).map((m): Row => ({ account, m }))))
+    const lists = await Promise.all(accounts.map(async (account) => (await savedMessages(account, inboxOf(account), limit)).map((m): Row => ({ account, m }))))
     return lists.flat()
-  }, [accounts])
+  }, [accounts, limit])
 
   const load = useCallback(
     async (force: boolean) => {
@@ -102,8 +102,18 @@ export default function UnifiedList({ accounts, onSelect, onOpen, onCompose, onA
       const found = query.trim() ? new Set(searchSummaries(visible.map((r) => r.m), query, { labelsOf }).map((m) => m.uid)) : null
       for (const r of visible) if (!found || found.has(r.m.uid)) out.push(r)
     }
-    return out.sort((x, y) => (y.m.date ?? 0) - (x.m.date ?? 0)).slice(0, MAX_ROWS)
-  }, [rows, accounts, query, labels])
+    out.sort((x, y) => (y.m.date ?? 0) - (x.m.date ?? 0))
+    // An account that has more saved than is loaded stops at its oldest loaded message; stop there for all, so older mail
+    // from the other accounts does not show with gaps where this one's would be.
+    let cutoff = 0
+    for (const a of accounts) {
+      const mine = rows.filter((r) => r.account.email === a.email)
+      if (mine.length >= limit) cutoff = Math.max(cutoff, mine[mine.length - 1]?.m.date ?? 0)
+    }
+    return cutoff > 0 ? out.filter((r) => (r.m.date ?? 0) >= cutoff) : out
+  }, [rows, accounts, query, labels, limit])
+
+  const more = useMemo(() => !!rows && accounts.some((a) => rows.filter((r) => r.account.email === a.email).length >= limit), [rows, accounts, limit])
 
   const unread = useMemo(() => (rows ?? []).filter((r) => !r.m.flags.includes('\\Seen')).length, [rows])
 
@@ -184,6 +194,12 @@ export default function UnifiedList({ accounts, onSelect, onOpen, onCompose, onA
       <FlatList
         data={shown}
         keyExtractor={key}
+        onEndReached={() => more && setLimit((l) => l + SHOWN_MESSAGES)}
+        onEndReachedThreshold={1.5}
+        initialNumToRender={12}
+        maxToRenderPerBatch={8}
+        windowSize={7}
+        removeClippedSubviews
         contentContainerStyle={{ paddingBottom: 96 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load(true)} tintColor={colors.muted} colors={[colors.accent]} progressBackgroundColor={colors.raised} />}
         ListEmptyComponent={rows !== null && !refreshing ? <Note style={{ padding: 16 }}>{query ? 'Nothing matches.' : 'Nothing here.'}</Note> : undefined}
